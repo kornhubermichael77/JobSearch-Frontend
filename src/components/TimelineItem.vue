@@ -214,17 +214,10 @@ const statusBadgeColor = (status) => {
       </div>
 
       <!-- Status -->
-      <div v-if="communication.status" class="detail-field">
-        <strong>Status:</strong>
-        <span class="badge" :class="`bg-${statusBadgeColor(communication.status)}`">
-          {{ communication.status }}
-        </span>
-      </div>
+      <!-- Redundant mit timeline-summary - nicht mehr anzeigen -->
 
       <!-- Datum (vollständig) -->
-      <div class="detail-field">
-        <strong>Datum/Zeit:</strong> {{ formatDate(communication.date) }}
-      </div>
+      <!-- Redundant mit timeline-summary - nicht mehr anzeigen -->
     </div>
   </div>
 </template>
@@ -383,6 +376,7 @@ const statusBadgeColor = (status) => {
   border: 1px solid #bbb;
   border-radius: 4px;
   line-height: 1.5;
+  flex: 1;
 }
 
 .detail-field a {
