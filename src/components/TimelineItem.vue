@@ -38,7 +38,7 @@ const emit = defineEmits(['toggle', 'edit', 'delete']);
  */
 const typeConfig = {
   PHONE: { icon: '📞', color: 'primary', label: 'Telefon', bgColor: '#d4edff' },
-  MAIL: { icon: '📧', color: 'info', label: 'E-Mail', bgColor: '#fff4e6' },
+  MAIL: { icon: '✉️', color: 'info', label: 'E-Mail', bgColor: '#fff4e6' },
   WEBFORM: { icon: '🌐', color: 'success', label: 'Web-Formular', bgColor: '#e8f5e9' },
   TALK: { icon: '👥', color: 'warning', label: 'Gespräch', bgColor: '#fff8e1' },
   TRIAL: { icon: '🧪', color: 'secondary', label: 'Test', bgColor: '#f3e5f5' },
@@ -52,8 +52,8 @@ const config = computed(() => typeConfig[props.communication.type] || typeConfig
  */
 const directionIcon = computed(() => {
   const dir = props.communication.direction;
-  if (dir === 'IN') return '📥';
-  if (dir === 'OUT') return '📤';
+  if (dir === 'IN') return '→';
+  if (dir === 'OUT') return '←';
   return '';
 });
 
@@ -103,13 +103,11 @@ const statusBadgeColor = (status) => {
 
       <!-- Type Icon + Direction -->
       <div class="type-indicator">
-        <span class="type-icon">{{ config.icon }}</span>
-        <span v-if="directionIcon" class="direction-icon">{{ directionIcon }}</span>
       </div>
 
       <!-- Summary  -->
       <div class="timeline-summary flex-grow-1">
-        <strong>{{ config.label }}</strong>
+        <strong><span v-if="directionIcon" class="direction-icon">{{ directionIcon }}</span> <span class="type-icon">{{ config.icon }}</span> {{ config.label }}</strong>
         <span class="text-muted ms-2">
           {{ formatDate(communication.date) }}
         </span>
@@ -123,8 +121,8 @@ const statusBadgeColor = (status) => {
         </span>
       </div>
 
-      <!-- Edit/Delete Buttons (Compact) -->
-      <div class="timeline-actions">
+      <!-- Edit/Delete Buttons (nur wenn expandiert) -->
+      <div v-if="isExpanded" class="timeline-actions">
         <button
           class="btn btn-sm btn-outline-primary"
           @click.stop="emit('edit')"
@@ -297,15 +295,13 @@ const statusBadgeColor = (status) => {
 }
 
 .type-icon {
-  display: flex;
-  align-items: center;
+  display: inline;
+  font-size: 1rem;
 }
 
 .direction-icon {
-  font-size: 0.8rem;
-  position: relative;
-  top: -2px;
-  left: -4px;
+  font-size: 1rem;
+  margin-right: 0.25rem;
 }
 
 /**
@@ -413,20 +409,16 @@ const statusBadgeColor = (status) => {
  */
 @media (max-width: 768px) {
   .timeline-header {
-    flex-direction: column;
-    align-items: flex-start;
     gap: 0.5rem;
   }
 
   .timeline-summary {
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 0.25rem;
   }
 
   .timeline-actions {
-    margin-left: 0;
-    margin-top: 0.5rem;
-    width: 100%;
+    margin-left: auto;
   }
 
   .timeline-details {

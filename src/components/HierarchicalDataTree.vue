@@ -428,86 +428,43 @@ const isTimelineLoading = (jobId) => {
                     <strong>Beschreibung:</strong> {{ job.text }}
                   </div>
 
-                  <!-- Zeile 4+: Nur im expanded-Zustand -->
-                  <div v-if="isJobExpanded(job.id)" class="job-expanded-details">
-                    <!-- Teilzeit, Homeoffice, Gleitzeit -->
-                    <div v-if="job.teilzeit || job.homeoffice || job.gleitzeit" class="job-work-conditions">
-                      <div v-if="job.teilzeit" class="job-condition">
-                        Teilzeit: {{ job.teilzeit }}
-                      </div>
-                      <div v-if="job.homeoffice" class="job-condition">
-                        Homeoffice: {{ job.homeoffice }}
-                      </div>
-                      <div v-if="job.gleitzeit" class="job-condition">
-                        Gleitzeit: {{ job.gleitzeit }}
-                      </div>
-                    </div>
-
-                    <!-- Ansprechpersonen (Tel) -->
-                    <div v-if="job.telPerson || job.tel" class="job-person">
-                      <strong>  Ansprechperson (Tel):</strong>
-                      <span v-if="job.telPerson">{{ job.telPerson }}</span>
-                      <span v-if="job.tel" class="ms-2">
-                        <a :href="`tel:${job.tel}`">{{ job.tel }}</a>
-                      </span>
-                    </div>
-
-                    <!-- Ansprechpersonen (Mail) -->
-                    <div v-if="job.mailPerson || job.mail" class="job-person">
-                      <strong>  Ansprechperson (Mail):</strong>
-                      <span v-if="job.mailPerson">{{ job.mailPerson }}</span>
-                      <span v-if="job.mail" class="ms-2">
-                        <a :href="`mailto:${job.mail}`">{{ job.mail }}</a>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Job Details - Kontakt & Extras -->
-                <div class="job-details-grid">
-                  <!-- Kontakt Informationen -->
-                  <div v-if="job.mail || job.tel" class="job-details-section">
-                    <h6 class="section-title">📧 Kontakt</h6>
-                    <div v-if="job.mail" class="detail-line">
-                      <span class="label">E-Mail:</span>
-                      <span class="value"><a :href="`mailto:${job.mail}`">{{ job.mail }}</a></span>
-                    </div>
-                    <div v-if="job.mailPerson" class="detail-line">
-                      <span class="label">Ansprechperson (Mail):</span>
-                      <span class="value">{{ job.mailPerson }}</span>
-                    </div>
-                    <div v-if="job.tel" class="detail-line">
-                      <span class="label">Telefon:</span>
-                      <span class="value"><a :href="`tel:${job.tel}`">{{ job.tel }}</a></span>
-                    </div>
-                    <div v-if="job.telPerson" class="detail-line">
-                      <span class="label">Ansprechperson (Tel):</span>
-                      <span class="value">{{ job.telPerson }}</span>
-                    </div>
+                  <!-- Features -->
+                  <div v-if="job.features" class="job-text">
+                    <strong>Features:</strong> {{ job.features }}
                   </div>
 
-                  <!-- Arbeitsplatz Details -->
-                  <div v-if="job.teilzeit || job.gleitzeit || job.homeoffice" class="job-details-section">
-                    <h6 class="section-title">⚙️ Arbeitsplatz</h6>
-                    <div v-if="job.teilzeit" class="detail-line">
-                      <span class="label">Teilzeit:</span>
-                      <span class="value">{{ job.teilzeit }}</span>
+                  <!-- Job Details - Kontakt & Extras -->
+                  <div class="job-details-grid">
+                    <!-- Kontakt Informationen -->
+                    <div v-if="job.mail || job.tel" class="job-details-section">
+                      <h6 class="section-title">📧 Kontakt</h6>
+                      <div v-if="job.mail || job.mailPerson" class="detail-line">
+                        <span class="label">E-Mail:</span>
+                        <span v-if="job.mail" class="value"><a :href="`mailto:${job.mail}`">{{ job.mail }}</a></span>
+                        <span v-if="job.mailPerson" class="value">{{ job.mailPerson }}</span>
+                      </div>
+                      <div v-if="job.tel || job.telPerson" class="detail-line">
+                        <span class="label">Telefon:</span>
+                        <span v-if="job.tel" class="value"><a :href="`tel:${job.tel}`">{{ job.tel }}</a></span>
+                        <span v-if="job.telPerson" class="value">{{ job.telPerson }}</span>
+                      </div>
                     </div>
-                    <div v-if="job.gleitzeit" class="detail-line">
-                      <span class="label">Gleitzeit:</span>
-                      <span class="value">{{ job.gleitzeit }}</span>
-                    </div>
-                    <div v-if="job.homeoffice" class="detail-line">
-                      <span class="label">Home Office:</span>
-                      <span class="value">{{ job.homeoffice }}</span>
-                    </div>
-                  </div>
 
-                  <!-- Zusätzliche Features -->
-                  <div v-if="job.features" class="job-details-section">
-                    <h6 class="section-title">⭐ Features</h6>
-                    <div class="detail-line">
-                      <span class="value">{{ job.features }}</span>
+                    <!-- Arbeitsplatz Details -->
+                    <div v-if="job.teilzeit || job.gleitzeit || job.homeoffice" class="job-details-section">
+                      <h6 class="section-title">⚙️ Arbeitsplatz</h6>
+                      <div v-if="job.teilzeit" class="detail-line">
+                        <span class="label">Teilzeit:</span>
+                        <span class="value">{{ job.teilzeit }}</span>
+                      </div>
+                      <div v-if="job.gleitzeit" class="detail-line">
+                        <span class="label">Gleitzeit:</span>
+                        <span class="value">{{ job.gleitzeit }}</span>
+                      </div>
+                      <div v-if="job.homeoffice" class="detail-line">
+                        <span class="label">Home Office:</span>
+                        <span class="value">{{ job.homeoffice }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -535,6 +492,11 @@ const isTimelineLoading = (jobId) => {
 
                   <!-- Pagination + Action Buttons (in einer Zeile) -->
                   <div class="timeline-controls">
+                    <!-- Create Communication Button (ganz links) -->
+                    <button class="btn btn-sm btn-success">
+                      + Kommunikation
+                    </button>
+
                     <!-- Pagination Info (nur wenn Timeline nicht leer) -->
                     <div v-if="getTimelineForJob(job.id)?.content?.length > 0" class="pagination-info">
                       <small class="text-muted">
@@ -543,38 +505,41 @@ const isTimelineLoading = (jobId) => {
                       </small>
                     </div>
 
-                    <!-- Buttons -->
-                    <button
-                      v-if="(getTimelineForJob(job.id).currentPage || 0) > 0"
-                      class="btn btn-sm btn-outline-secondary"
-                      @click="emit('prev-page', job.id)"
-                    >
-                      ← Vorherige
-                    </button>
-                    <button
-                      v-if="!getTimelineForJob(job.id).last"
-                      class="btn btn-sm btn-outline-secondary"
-                      @click="emit('next-page', job.id)"
-                    >
-                      Nächste →
-                    </button>
-                    <button class="btn btn-sm btn-success">
-                      + Kommunikation
-                    </button>
-                    <button
-                      class="btn btn-sm btn-info"
-                      @click="emit('filter-by-company')"
-                      title="Filter auf diese Firma setzen"
-                    >
-                      🔍 Firma
-                    </button>
-                    <button
-                      class="btn btn-sm btn-info"
-                      @click="emit('filter-by-job')"
-                      title="Filter auf diesen Job setzen"
-                    >
-                      🔍 Job
-                    </button>
+                    <!-- Pagination Buttons Container -->
+                    <span class="timeline-buttons">
+                      <button
+                        v-if="(getTimelineForJob(job.id).currentPage || 0) > 0"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="emit('prev-page', job.id)"
+                      >
+                        ← Vorherige
+                      </button>
+                      <button
+                        v-if="!getTimelineForJob(job.id).last"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="emit('next-page', job.id)"
+                      >
+                        Nächste →
+                      </button>
+                    </span>
+
+                    <!-- Filter Buttons Container -->
+                    <div class="timeline-filters">
+                      <button
+                        class="btn btn-sm btn-info"
+                        @click="emit('filter-by-company')"
+                        title="Filter auf diese Firma setzen"
+                      >
+                        🔍 Firma
+                      </button>
+                      <button
+                        class="btn btn-sm btn-info"
+                        @click="emit('filter-by-job')"
+                        title="Filter auf diesen Job setzen"
+                      >
+                        🔍 Job
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -822,6 +787,7 @@ const isTimelineLoading = (jobId) => {
   flex-direction: column;
   margin: 0;
   gap: 0.5rem;
+  margin-bottom: -0.5rem;
 }
 
 .address-row {
@@ -907,7 +873,7 @@ const isTimelineLoading = (jobId) => {
   gap: 0.75rem;
   padding: 0.75rem 1rem;
   background: #ffe6e6;
-  border-left: none;
+  border-left: 4px solid #667eea;
   border-radius: 4px;
   margin-top: 0;
   margin-left: 0;
@@ -1052,6 +1018,11 @@ const isTimelineLoading = (jobId) => {
   font-weight: 600;
   margin: 0;
   color: #333;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .job-status {
@@ -1066,6 +1037,7 @@ const isTimelineLoading = (jobId) => {
   font-weight: 500;
   margin: 0;
   color: #555;
+  text-align: left;
 }
 
 /* Zeile 3: Meta */
@@ -1120,7 +1092,7 @@ const isTimelineLoading = (jobId) => {
 }
 
 .job-condition {
-  padding-left: 1rem;
+  padding-left: 0;
 }
 
 .job-person {
@@ -1234,13 +1206,12 @@ const isTimelineLoading = (jobId) => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 1rem;
-  margin-top: 0.75rem;
 }
 
 .job-details-section {
   padding: 0.75rem;
-  background: #f0f8ff;
-  border-left: 3px solid #667eea;
+  background: #f8f9fa;
+  border: 1px solid #bbb;
   border-radius: 4px;
   font-size: 0.85rem;
 }
@@ -1255,9 +1226,11 @@ const isTimelineLoading = (jobId) => {
 
 .job-details-section .detail-line {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.5rem;
+  flex-direction: row;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.3125rem;
+  flex-wrap: wrap;
 }
 
 .job-details-section .detail-line:last-child {
@@ -1338,18 +1311,33 @@ const isTimelineLoading = (jobId) => {
   padding: 0.75rem 0;
   border-top: 1px solid #e9ecef;
   flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.timeline-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
 }
 
 .pagination-info {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-right: auto;
   white-space: nowrap;
 }
 
 .pagination-info small {
   font-size: 0.8rem;
+}
+
+.timeline-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  flex-basis: auto;
+  min-width: fit-content;
 }
 
 .timeline-controls .btn {
@@ -1424,7 +1412,6 @@ const isTimelineLoading = (jobId) => {
 
 .create-address-section {
   padding: 0.75rem 1rem;
-  margin-top: 0.5rem;
   text-align: center;
   background: #e3f2fd;
   border-radius: 4px;
@@ -1528,8 +1515,6 @@ const isTimelineLoading = (jobId) => {
   .job-header {
     padding: 0.75rem;
     gap: 0.5rem;
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   .job-title {
@@ -1558,18 +1543,12 @@ const isTimelineLoading = (jobId) => {
   }
 
   .timeline-controls {
-    flex-direction: column;
-    align-items: stretch;
     gap: 0.5rem;
   }
 
   .pagination-info {
     margin-right: 0;
     justify-content: center;
-  }
-
-  .timeline-controls .btn {
-    width: 100%;
   }
 
   .create-job-section {
@@ -1592,11 +1571,6 @@ const isTimelineLoading = (jobId) => {
     order: 4;
     width: 100%;
     margin-left: 0 !important;
-  }
-
-  .job-header {
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   .job-address-inline {
