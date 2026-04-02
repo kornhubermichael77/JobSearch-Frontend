@@ -152,8 +152,10 @@ export const communicationApi = {
   // POST /api/communications
   create: (data) => axiosInstance.post('/communications', data),
 
-  // PUT /api/communications/{id}
-  update: (id, data) => axiosInstance.put(`/communications/${id}`, data),
+  // PUT /api/communications/{id}?id={id}
+  // Backend erwartet: ID im Path UND Query-Param (redundant aber korrekt)
+  update: (id, data) =>
+    axiosInstance.put(`/communications/${id}`, data, { params: { id } }),
 
   // DELETE /api/communications/{id}
   delete: (id) => axiosInstance.delete(`/communications/${id}`),

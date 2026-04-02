@@ -198,6 +198,7 @@ const handleLogout = () => {
             :timelines-map="timelines"
             :loading-jobs-map="loadingJobs"
             :loading-timeline-map="loadingTimeline"
+            :communication-statuses="communicationStatuses"
             @load-jobs="handleLoadJobs"
             @load-timeline="handleLoadTimeline"
             @next-page="(jobId) => loadTimelineForJob(jobId, (timelines[jobId]?.currentPage || 0) + 1)"

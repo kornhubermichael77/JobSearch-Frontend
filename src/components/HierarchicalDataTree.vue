@@ -28,6 +28,10 @@ const props = defineProps({
   timelinesMap: Object, // { [jobId]: timeline_data }
   loadingJobsMap: Object,
   loadingTimelineMap: Object,
+  communicationStatuses: {
+    type: Array,
+    default: () => [],
+  },
 });
 
 const emit = defineEmits([
@@ -56,6 +60,26 @@ const expandedJobs = ref(new Set());
 const expandedAddresses = ref(new Set());
 const expandedJobAddresses = ref(new Set());
 const expandedCommunications = ref(new Set());
+
+/**
+ * State für Create-Mode einer neuen Kommunikation
+ */
+const creatingCommunicationForJobId = ref(null);
+const selectedCommunicationType = ref(null);
+const showCommunicationTypeMenu = ref(false);
+const createCommButtonRefs = ref({});
+
+/**
+ * Verfügbare Kommunikationstypen
+ */
+const communicationTypes = [
+  { type: 'PHONE', icon: '📞', label: 'Telefon' },
+  { type: 'MAIL', icon: '✉️', label: 'E-Mail' },
+  { type: 'WEBFORM', icon: '🌐', label: 'Web-Formular' },
+  { type: 'TALK', icon: '👥', label: 'Gespräch' },
+  { type: 'TRIAL', icon: '🧪', label: 'Test' },
+  { type: 'INTERVIEW', icon: '👔', label: 'Interview' },
+];
 
 // Initial: alle Firmen + alle Jobs collapsed, Adressen/Communications collapsed
 const initializeExpanded = (companies) => {
@@ -130,6 +154,57 @@ const toggleCommunication = (commId) => {
     expandedCommunications.value.add(commId);
   }
 };
+
+/**
+ * Update communication after edit
+ */
+const updateCommunication = (commId, updatedComm) => {
+  // ✅ Nutze props.companies nicht companies.value
+  if (!props.companies) {
+    console.warn('⚠️ Props.companies sind nicht verfügbar');
+    return;
+  }
+  
+  // Finde Job mit dieser Kommunikation
+  for (const company of props.companies) {
+    // Prüfe ob Jobs vorhanden sind
+    const jobs = props.jobsMap?.[company.id] || [];
+    for (const job of jobs) {
+      const timeline = getTimelineForJob(job.id);
+      if (timeline && timeline.content) {
+        const commIndex = timeline.content.findIndex(c => c.id === commId);
+        if (commIndex !== -1) {
+          // Update Kommunikation
+          timeline.content[commIndex] = updatedComm;
+          console.log('✅ Kommunikation aktualisiert:', commId, updatedComm);
+          return;
+        }
+      }
+    }
+  }
+};
+
+/**
+ * Create Communication Handlers
+ */
+const startCreateCommunication = (jobId) => {
+  creatingCommunicationForJobId.value = jobId;
+  selectedCommunicationType.value = null;
+  showCommunicationTypeMenu.value = true;
+};
+
+const selectCommunicationType = (type) => {
+  console.log('✅ Typ selected:', type);
+  selectedCommunicationType.value = type;
+  showCommunicationTypeMenu.value = false;
+};
+
+const cancelCreateCommunication = () => {
+  creatingCommunicationForJobId.value = null;
+  selectedCommunicationType.value = null;
+  showCommunicationTypeMenu.value = false;
+};
+
 
 /**
  * Computed: ist Company expandiert?
@@ -479,23 +554,77 @@ const isTimelineLoading = (jobId) => {
 
                   <!-- Timeline Items -->
                   <div v-else class="timeline-items">
+                    <!-- 🔧 CREATE Mode TimelineItem (am Anfang, nur wenn aktiv) -->
+                    <TimelineItem
+                      v-if="creatingCommunicationForJobId === job.id && selectedCommunicationType"
+                      mode="create"
+                      :communication-type="selectedCommunicationType"
+                      :job-id="job.id"
+                      :is-expanded="true"
+                      :communication-statuses="props.communicationStatuses"
+                      @toggle="() => {}"
+                      @edit="() => {}"
+                      @update="(newComm) => {
+                        // Nach erfolgreicher Erstellung: TimelineItem liste aktualisieren
+                        const timeline = getTimelineForJob(job.id);
+                        if (timeline && timeline.content) {
+                          timeline.content.unshift(newComm);
+                        }
+                        cancelCreateCommunication();
+                      }"
+                      @delete="() => cancelCreateCommunication()"
+                    />
+
+                    <!-- EDIT Mode TimelineItems (existierende Kommunikationen) -->
                     <TimelineItem
                       v-for="(comm, index) in getTimelineForJob(job.id).content"
                       :key="comm.id ? `${job.id}-${comm.id}` : `${job.id}-temp-${index}`"
+                      mode="edit"
                       :communication="comm"
+                      :job-id="job.id"
                       :is-expanded="isCommunicationExpanded(comm.id)"
+                      :communication-statuses="props.communicationStatuses"
                       @toggle="() => toggleCommunication(comm.id)"
                       @edit="emit('edit-communication', comm)"
+                      @update="(updatedComm) => updateCommunication(comm.id, updatedComm)"
                       @delete="emit('delete-communication', comm.id)"
                     />
                   </div>
 
                   <!-- Pagination + Action Buttons (in einer Zeile) -->
                   <div class="timeline-controls">
-                    <!-- Create Communication Button (ganz links) -->
-                    <button class="btn btn-sm btn-success">
-                      + Kommunikation
-                    </button>
+                    <!-- Create Communication Button mit Dropdown Menu -->
+                    <div class="btn-group" role="group">
+                      <button
+                        class="btn btn-sm btn-success"
+                        @click.stop="startCreateCommunication(job.id)"
+                      >
+                        + Kommunikation
+                      </button>
+
+                      <!-- Dropdown Menu für Typ-Auswahl (wenn geöffnet) -->
+                      <div
+                        v-if="creatingCommunicationForJobId === job.id && showCommunicationTypeMenu"
+                        class="communication-type-menu"
+                      >
+                        <div class="menu-header">Kommunikationstyp auswählen:</div>
+                        <button
+                          v-for="commType in communicationTypes"
+                          :key="commType.type"
+                          class="menu-item"
+                          @click="selectCommunicationType(commType.type)"
+                        >
+                          <span class="icon">{{ commType.icon }}</span>
+                          <span class="label">{{ commType.label }}</span>
+                        </button>
+                        <button
+                          class="menu-item cancel"
+                          @click="cancelCreateCommunication"
+                        >
+                          ✕ Abbrechen
+                        </button>
+                      </div>
+                    </div>
 
                     <!-- Pagination Info (nur wenn Timeline nicht leer) -->
                     <div v-if="getTimelineForJob(job.id)?.content?.length > 0" class="pagination-info">
@@ -596,7 +725,7 @@ const isTimelineLoading = (jobId) => {
   margin-left: 0; /* Level 1: no indent */
   background: white;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transition: box-shadow 0.2s;
 }
@@ -774,6 +903,7 @@ const isTimelineLoading = (jobId) => {
 .company-content {
   padding: 0;
   background: linear-gradient(135deg, #667eea08 0%, #764ba208 100%);
+  overflow: visible;
 }
 
 /**
@@ -942,7 +1072,7 @@ const isTimelineLoading = (jobId) => {
 .job-item {
   background: white;
   border-radius: 6px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
@@ -1183,6 +1313,8 @@ const isTimelineLoading = (jobId) => {
   flex-direction: column;
   gap: 1rem;
   text-align: left;
+  overflow: visible;
+  position: relative;
 }
 
 .job-text {
@@ -1278,6 +1410,9 @@ const isTimelineLoading = (jobId) => {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  overflow: visible;
+  position: relative;
+  z-index: 50;
 }
 
 .timeline-title {
@@ -1292,6 +1427,8 @@ const isTimelineLoading = (jobId) => {
   flex-direction: column;
   gap: 0.75rem;
   margin-bottom: 1rem;
+  overflow: visible;
+  position: relative;
 }
 
 .timeline-pagination {
@@ -1312,6 +1449,8 @@ const isTimelineLoading = (jobId) => {
   border-top: 1px solid #e9ecef;
   flex-wrap: wrap;
   justify-content: flex-start;
+  position: relative;
+  z-index: 100;
 }
 
 .timeline-filters {
@@ -1589,5 +1728,76 @@ const isTimelineLoading = (jobId) => {
   .job-title {
     font-size: 0.85rem;
   }
+}
+
+/**
+ * Communication Type Menu (Dropdown)
+ */
+.communication-type-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 10000;
+  min-width: 200px;
+  margin-top: 0.25rem;
+}
+
+.menu-header {
+  padding: 0.5rem 1rem;
+  background: #f8f9fa;
+  border-bottom: 1px solid #ddd;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.menu-item:last-child {
+  border-bottom: none;
+}
+
+.menu-item:hover:not(.cancel) {
+  background: #f8f9fa;
+}
+
+.menu-item.cancel {
+  color: #dc3545;
+  justify-content: center;
+}
+
+.menu-item.cancel:hover {
+  background: #fff5f5;
+}
+
+.menu-item .icon {
+  font-size: 1.1rem;
+}
+
+.menu-item .label {
+  font-weight: 500;
+}
+
+.btn-group {
+  position: relative;
+  display: inline-block;
 }
 </style>
