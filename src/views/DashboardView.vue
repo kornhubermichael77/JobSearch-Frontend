@@ -134,9 +134,9 @@ const handleLogout = () => {
     <header class="dashboard-header sticky-top">
       <div class="container-fluid">
         <div class="header-content d-flex justify-content-between align-items-center">
-          <div>
-            <h1 class="h4 mb-0">📋 JobSearch Dashboard</h1>
-            <span v-if="user" class="text-muted ms-2">👤 {{ user.username }}</span>
+          <div class="d-flex align-items-center gap-2">
+            <h1 class="h4 mb-0">📋 JobSearch</h1>
+            <span v-if="user" class="text-muted">👤 {{ user.username }}</span>
           </div>
           <button
             @click="handleLogout"
@@ -227,7 +227,7 @@ const handleLogout = () => {
 .dashboard-header {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
-  padding: 1rem 0;
+  padding: 6px 0;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   z-index: 100;
 }
@@ -266,7 +266,8 @@ html {
  */
 @media (max-width: 768px) {
   .dashboard-header {
-    padding: 0.75rem 0;
+    padding: 0.15rem 0;
+    box-shadow: 0px 5px 25px rgb(44, 17, 117);
   }
 
   .dashboard-header h1 {

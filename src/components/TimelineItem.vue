@@ -189,6 +189,12 @@ const startEdit = async () => {
     // ✅ EDIT MODE: Kopiere aktuelle Daten
     originalData.value = JSON.parse(JSON.stringify(props.communication));
     Object.assign(formData, props.communication);
+    
+    // ✅ Entferne Sekunden aus Datum (falls vorhanden)
+    if (formData.date) {
+      // Format: "2026-04-03T10:30:45" oder "2026-04-03 10:30:45" → "2026-04-03 10:30"
+      formData.date = formData.date.substring(0, 16).replace('T', ' ');
+    }
   } else {
     // ✅ CREATE MODE: Leere Felder, Type vorgesetzt
     originalData.value = {};
@@ -242,18 +248,21 @@ const initDatePicker = () => {
       time_24hr: true,             // ✅ 24-Stunden-Format
       weekNumbers: false,
       firstDayOfWeek: 2,           // Test: 2 statt 1 für Montag-Start
-      defaultDate: formData.date ? new Date(formData.date) : new Date(),
+      defaultDate: formData.date ? new Date(formData.date.replace(' ', 'T')) : new Date(),
       // locale nicht gesetzt = English fallback (kein undefined-Fehler)
+      clickOpens: false,           // ✅ Nur Icon öffnet Picker, nicht Textfeld
       appendTo: document.body,     // Append to body wie üblich
       static: false,
       onChange: (selectedDates) => {
         if (selectedDates[0]) {
-          // Format to ISO 8601 string (2026-04-02T10:09:00)
+          // Format to YYYY-MM-DD HH:MM mit Leerzeichen (kein T)
           const d = selectedDates[0];
-          const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-            .toISOString()
-            .slice(0, 19); // 'YYYY-MM-DDTHH:MM:SS'
-          formData.date = iso;
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          const hours = String(d.getHours()).padStart(2, '0');
+          const minutes = String(d.getMinutes()).padStart(2, '0');
+          formData.date = `${year}-${month}-${day} ${hours}:${minutes}`;
         }
       },
     });
@@ -542,7 +551,7 @@ const shouldShowField = (fieldName) => {
         <!-- Datum/Zeit mit Picker -->
         <div class="edit-field">
           <label>Datum/Zeit:</label>
-          <div class="edit-field-content">
+          <div class="edit-field-content date-picker-container">
             <input
               v-model="formData.date"
               type="text"
@@ -940,21 +949,26 @@ const shouldShowField = (fieldName) => {
  */
 .edit-field {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  flex-direction: row;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .edit-field label {
   font-weight: 600;
   color: #333;
   font-size: 0.85rem;
-  margin-bottom: 0.25rem;
+  min-width: 120px;
+  flex-shrink: 0;
 }
 
 .edit-field-content {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex: 1;
+  min-width: 200px;
 }
 
 /**
@@ -965,15 +979,21 @@ const shouldShowField = (fieldName) => {
 }
 
 .date-picker-container input[type="text"] {
-  padding-right: 2.5rem;
+  pointer-events: none;           /* ✅ Input nicht anclickbar */
+  cursor: default;                /* Kein Text-Selection Cursor */
 }
 
 .edit-field input[type="text"],
 .edit-field input[type="email"],
 .edit-field input[type="url"],
+.edit-field input[type="number"],
 .edit-field textarea,
-.edit-field select {
+.edit-field select,
+.edit-field-content {
   font-size: 0.9rem;
+  width: 100%;
+  flex: 1;
+  min-width: 200px;
 }
 
 .edit-field textarea {
