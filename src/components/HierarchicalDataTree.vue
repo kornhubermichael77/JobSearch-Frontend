@@ -20,6 +20,8 @@
 
 import { ref, computed } from 'vue';
 import TimelineItem from './TimelineItem.vue';
+import AddressItem from './AddressItem.vue';
+import { addressApi, jobApi } from '@/services/api.js';
 import { loadAddressForJob } from '@/composables/useData.js';
 
 const props = defineProps({
@@ -58,7 +60,6 @@ const emit = defineEmits([
 const expandedCompanies = ref(new Set());
 const expandedJobs = ref(new Set());
 const expandedAddresses = ref(new Set());
-const expandedJobAddresses = ref(new Set());
 const expandedCommunications = ref(new Set());
 
 /**
@@ -68,6 +69,16 @@ const creatingCommunicationForJobId = ref(null);
 const selectedCommunicationType = ref(null);
 const showCommunicationTypeMenu = ref(false);
 const createCommButtonRefs = ref({});
+
+/**
+ * State für Create-Mode einer neuen Adresse (bei Company)
+ */
+const creatingAddressForCompanyId = ref(null);
+
+/**
+ * State für Create-Mode einer neuen Adresse (bei Job)
+ */
+const creatingAddressForJobId = ref(null);
 
 /**
  * Verfügbare Kommunikationstypen
@@ -132,21 +143,6 @@ const toggleAddress = (addressId) => {
   }
 };
 
-const toggleJobAddress = async (jobId) => {
-  if (expandedJobAddresses.value.has(jobId)) {
-    expandedJobAddresses.value.delete(jobId);
-  } else {
-    expandedJobAddresses.value.add(jobId);
-    // Wenn Job-Adresse expandiert wird, lade vollständige Adressdaten
-    const job = Object.values(props.jobsMap || {})
-      .flat()
-      .find((j) => j.id === jobId);
-    if (job) {
-      await loadAddressForJob(job);
-    }
-  }
-};
-
 const toggleCommunication = (commId) => {
   if (expandedCommunications.value.has(commId)) {
     expandedCommunications.value.delete(commId);
@@ -205,6 +201,124 @@ const cancelCreateCommunication = () => {
   showCommunicationTypeMenu.value = false;
 };
 
+/**
+ * Address Create Handlers
+ */
+const startCreateAddress = (companyId) => {
+  creatingAddressForCompanyId.value = companyId;
+};
+
+const cancelCreateAddress = () => {
+  creatingAddressForCompanyId.value = null;
+};
+
+const startCreateJobAddress = (jobId) => {
+  creatingAddressForJobId.value = jobId;
+};
+
+const cancelCreateJobAddress = () => {
+  creatingAddressForJobId.value = null;
+};
+
+/**
+ * Address Update Handler (for Companies)
+ */
+const handleAddressUpdate = (company, updatedAddress) => {
+  // Aktualisiere die Adresse in der Company-Liste
+  if (company.addresses) {
+    const index = company.addresses.findIndex(a => a.id === updatedAddress.id);
+    if (index !== -1) {
+      // Ersetze die alte Adresse mit der neuen
+      company.addresses.splice(index, 1, updatedAddress);
+      console.log('✅ Adresse aktualisiert:', updatedAddress);
+    }
+  }
+};
+
+/**
+ * Job Address Update Handler
+ * When a job address is created or updated
+ */
+const handleJobAddressUpdate = (job, updatedAddress) => {
+  if (!updatedAddress) return;
+  
+  // 1. Wenn Create-Mode war: Close the form
+  if (creatingAddressForJobId.value === job.id) {
+    cancelCreateJobAddress();
+  }
+  
+  // 2. Update Job mit neue addressId (kommt vom Backend nach Create)
+  // Die Address selbst wurde bereits vom Backend erstellt
+  // Das Backend gibt die address_id zurück, die der Job referenzieren sollte
+  if (updatedAddress.id) {
+    job.addressId = updatedAddress.id;
+  }
+  
+  // 3. Local display refresh (alte Felder für Backward-Compat)
+  job.street = updatedAddress.street || null;
+  job.number = updatedAddress.number || null;
+  job.postcode = updatedAddress.postcode || null;
+  job.city = updatedAddress.city || null;
+  
+  console.log('✅ Job-Adresse aktualisiert:', job);
+};
+
+/**
+ * Address Delete Handler (Companies)
+ */
+const handleAddressDelete = async (company, addressId) => {
+  try {
+    // 1. API-Call: DELETE /api/addresses/{id}
+    await addressApi.delete(addressId);
+    
+    // 2. UI aktualisieren: Adresse aus Array entfernen
+    if (company.addresses) {
+      const index = company.addresses.findIndex(a => a.id === addressId);
+      if (index !== -1) {
+        company.addresses.splice(index, 1);
+        console.log('✅ Adresse gelöscht:', addressId);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Fehler beim Löschen der Adresse:', err);
+    alert('Fehler beim Löschen der Adresse: ' + (err.response?.data?.message || err.message));
+  }
+};
+
+/**
+ * Address Delete Handler (Jobs)
+ * Muss Adresse mit FK-Sicherung löschen:
+ * 1. Job.addressId auf NULL setzen (mit PATCH)
+ * 2. DANN die Adresse selbst löschen
+ */
+const handleJobAddressDelete = async (job) => {
+  try {
+    const addressIdToDelete = job.addressId;
+    
+    // 1. Job aktualisieren: addressId auf null setzen (via PATCH - nur dieses Feld)
+    await jobApi.updateAddressId(job.id, null);
+    console.log('✅ Job.addressId auf null gesetzt');
+    
+    // 2. Jetzt die Adresse selbst löschen (FK-Constraint ist erfüllt)
+    if (addressIdToDelete) {
+      await addressApi.delete(addressIdToDelete);
+      console.log('✅ Adresse gelöscht:', addressIdToDelete);
+    }
+    
+    // 3. UI aktualisieren: Job-Adressfelder zurücksetzen
+    job.street = null;
+    job.number = null;
+    job.postcode = null;
+    job.city = null;
+    job.addressId = null;
+    
+    console.log('✅ Job-Adresse komplett entfernt:', job.id);
+  } catch (err) {
+    console.error('❌ Fehler beim Löschen der Job-Adresse:', err);
+    alert('Fehler beim Löschen der Adresse: ' + (err.response?.data?.message || err.message));
+  }
+};
+
 
 /**
  * Computed: ist Company expandiert?
@@ -214,8 +328,6 @@ const isCompanyExpanded = (companyId) =>
 const isJobExpanded = (jobId) => expandedJobs.value.has(jobId);
 const isAddressExpanded = (addressId) =>
   expandedAddresses.value.has(addressId);
-const isJobAddressExpanded = (jobId) =>
-  expandedJobAddresses.value.has(jobId);
 const isCommunicationExpanded = (commId) =>
   expandedCommunications.value.has(commId);
 
@@ -336,53 +448,43 @@ const isTimelineLoading = (jobId) => {
         </div>
 
         <!-- ADRESSEN (zwischen Header und Content) -->
-        <div v-if="isCompanyExpanded(company.id) && company.addresses && company.addresses.length > 0" class="addresses-list">
-          <div v-for="address in company.addresses" :key="address.id" class="address-row">
-            <!-- LEFT: Toggle Button + Actions (vertikal) -->
-            <div class="address-row-left">
-              <button
-                class="toggle-btn"
-                :aria-expanded="isAddressExpanded(address.id)"
-                @click="toggleAddress(address.id)"
-              >
-                {{ isAddressExpanded(address.id) ? '▼' : '▶' }}
-              </button>
+        <div v-if="isCompanyExpanded(company.id)" class="addresses-list">
+          <!-- Existierende Adressen -->
+          <AddressItem
+            v-for="address in company.addresses"
+            :key="address.id"
+            :address="address"
+            :parent-type="'company'"
+            :parent-id="company.id"
+            :is-expanded="isAddressExpanded(address.id)"
+            :mode="'view'"
+            @toggle="toggleAddress(address.id)"
+            @update="handleAddressUpdate(company, $event)"
+            @delete="handleAddressDelete(company, $event)"
+          />
 
-              <!-- Address Actions (nur bei expanded) -->
-              <div v-if="isAddressExpanded(address.id)" class="address-actions">
-                <button class="btn btn-sm btn-outline-primary" title="Bearbeiten">✏️</button>
-                <button class="btn btn-sm btn-outline-danger" title="Löschen">🗑️</button>
-              </div>
-            </div>
-
-            <!-- MIDDLE: Address Summary (nur collapsed) -->
-            <div v-if="!isAddressExpanded(address.id)" class="address-summary">
-              📍 {{ address.city }}, {{ address.street }} {{ address.number }}
-            </div>
-
-            <!-- Details wenn Address expanded -->
-            <div v-if="isAddressExpanded(address.id)" class="address-details-expanded">
-              <div class="address-field">
-                <strong>Straße:</strong> {{ address.street }} {{ address.number }}
-              </div>
-              <div class="address-field">
-                <strong>PLZ/Stadt:</strong> {{ address.postcode }} {{ address.city }}
-              </div>
-              <div class="address-field">
-                <strong>Land:</strong> {{ address.country }}
-              </div>
-              <div v-if="address.distance" class="address-field">
-                <strong>Distanz:</strong> {{ address.distance }} km
-              </div>
-            </div>
+          <!-- Create neue Adresse Button + Form -->
+          <div v-if="!creatingAddressForCompanyId" class="create-address-button">
+            <button
+              class="btn btn-sm btn-info"
+              @click.stop="startCreateAddress(company.id)"
+            >
+              + Neue Adresse für {{ company.name }}
+            </button>
           </div>
-        </div>
 
-        <!-- Create Address Button (immer sichtbar wenn Firma expandiert) -->
-        <div v-if="isCompanyExpanded(company.id)" class="create-address-section">
-          <button class="btn btn-sm btn-info">
-            + Neue Adresse für {{ company.name }}
-          </button>
+          <!-- Create neue Adresse Form (wenn active) -->
+          <AddressItem
+            v-if="creatingAddressForCompanyId === company.id"
+            :key="`create-${company.id}`"
+            :address="null"
+            :parent-type="'company'"
+            :parent-id="company.id"
+            :is-expanded="true"
+            :mode="'create'"
+            @update="(newAddress) => { company.addresses.push(newAddress); cancelCreateAddress(); }"
+            @delete="cancelCreateAddress"
+          />
         </div>
 
         <!-- COMPANY CONTENT (expandiert) -->
@@ -452,51 +554,52 @@ const isTimelineLoading = (jobId) => {
                 </div>
               </div>
 
-              <!-- JOB ADDRESS ROW (analog zu address-row) -->
-              <div v-if="job.city || job.street || job.postcode" class="job-address-row">
-                <!-- LEFT: Toggle Button + Actions (vertikal) -->
-                <div class="job-address-row-left">
-                  <button
-                    class="toggle-btn"
-                    :aria-expanded="isJobAddressExpanded(job.id)"
-                    @click="toggleJobAddress(job.id)"
-                  >
-                    {{ isJobAddressExpanded(job.id) ? '▼' : '▶' }}
-                  </button>
+              <!-- JOB ADDRESS (View Mode - wenn vorhanden) -->
+              <AddressItem
+                v-if="(job.city || job.street || job.postcode) && creatingAddressForJobId !== job.id"
+                :address="{
+                  id: job.id,
+                  street: job.street || null,
+                  number: job.number || null,
+                  postcode: job.postcode || null,
+                  city: job.city || null,
+                  country: null,
+                  traveltime: null,
+                  distance: null,
+                  headquarter: false
+                }"
+                :parent-type="'job'"
+                :parent-id="job.id"
+                :is-expanded="isAddressExpanded(job.id)"
+                :mode="'view'"
+                @toggle="toggleAddress(job.id)"
+                @update="handleJobAddressUpdate(job, $event)"
+                @delete="handleJobAddressDelete(job)"
+              />
 
-                  <!-- Job Address Actions (nur bei expanded) -->
-                  <div v-if="isJobAddressExpanded(job.id)" class="address-actions">
-                    <button class="btn btn-sm btn-outline-primary" title="Bearbeiten">✏️</button>
-                    <button class="btn btn-sm btn-outline-danger" title="Löschen">🗑️</button>
-                  </div>
-                </div>
+              <!-- JOB ADDRESS (Create Mode) -->
+              <AddressItem
+                v-if="creatingAddressForJobId === job.id"
+                :address="{}"
+                :parent-type="'job'"
+                :parent-id="job.id"
+                :is-expanded="true"
+                :mode="'create'"
+                @update="handleJobAddressUpdate(job, $event); cancelCreateJobAddress();"
+              />
 
-                <!-- MIDDLE: Address Summary (nur collapsed) -->
-                <div v-if="!isJobAddressExpanded(job.id)" class="job-address-summary">
-                  📍 {{ job.postcode }} {{ job.city }}<span v-if="job.street">, {{ job.street }} {{ job.number }}</span>
-                </div>
-
-                <!-- Details wenn Address expanded -->
-                <div v-if="isJobAddressExpanded(job.id)" class="job-address-expanded">
-                  <div class="address-field">
-                    <strong>Straße:</strong> {{ job.street }} {{ job.number }}
-                  </div>
-                  <div class="address-field">
-                    <strong>PLZ/Stadt:</strong> {{ job.postcode }} {{ job.city }}
-                  </div>
-                  <div class="address-field">
-                    <strong>Land:</strong> {{ job.country }}
-                  </div>
-                  <div v-if="job.distance" class="address-field">
-                    <strong>Distanz:</strong> {{ job.distance }} km
-                  </div>
-                </div>
-              </div>
+              <!-- Neue Adresse Button (nur wenn keine Adresse vorhanden und nicht im Create-Mode) -->
+              <button
+                v-if="!job.addressId && creatingAddressForJobId !== job.id"
+                class="btn btn-sm btn-outline-secondary"
+                @click="startCreateJobAddress(job.id)"
+              >
+                + Adresse hinzufügen
+              </button>
 
               <!-- JOB CONTENT (expandiert - wächst inline) -->
               <!-- Job-Details wachsen direkt in job-item, nicht separate Box -->
               <div v-if="isJobExpanded(job.id)" class="job-details-collapsed-container">
-                <!-- Job Expanded Details mit Text zusammen -->
                 <div class="job-expanded-section">
                   <!-- Job Details Text -->
                   <div v-if="job.text" class="job-text">
@@ -920,139 +1023,36 @@ const isTimelineLoading = (jobId) => {
   margin-bottom: -0.5rem;
 }
 
-.address-row {
-  display: flex;
-  align-items: stretch;
-  gap: 0.75rem;
+.create-address-button {
   padding: 0.75rem 1rem;
-  background: #ffe6e6;
-  border-left: none;
-  border-radius: 4px;
-  transition: background 0.2s;
-  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
 }
 
-.address-row:hover {
-  background: #ffcccc;
+.create-address-button .btn {
+  font-size: 0.875rem;
 }
 
 /**
- * LEFT: Toggle Button + Actions (vertikal)
+ * Job Address Inline (read-only)
  */
-.address-row-left {
+.job-address-inline {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 0.25rem;
-  flex-shrink: 0;
-}
-
-.address-summary {
-  flex: 1;
-  font-size: 0.9rem;
-  color: #333;
-}
-
-.address-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.address-actions button {
-  font-size: 0.85rem;
-  padding: 0.25rem 0.5rem !important;
-}
-
-/* Details wenn Address expanded */
-.address-details-expanded {
-  padding: 0.5rem 0 0 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  flex: 1;
-}
-
-.address-field {
-  display: inline-flex;
-  align-items: flex-start;
   gap: 0.5rem;
-  font-size: 0.85rem;
+  padding: 0.5rem 1rem;
+  background-color: #f8f9fa;
+  border-left: 2px solid #667eea;
+  font-size: 0.875rem;
+  color: #495057;
+  margin: 0.5rem 0;
 }
 
-.address-field strong {
-  min-width: 100px;
-  flex-shrink: 0;
-  color: #667eea;
+.job-address-inline .address-icon {
+  font-size: 1rem;
 }
 
-/**
- * ============================================
- * LEVEL 2: JOB ADDRESS ROW (analog zu LEVEL 1: ADDRESS ROW)
- * ============================================
- */
-
-.job-address-row {
-  display: flex;
-  align-items: stretch;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background: #ffe6e6;
-  border-left: 4px solid #667eea;
-  border-radius: 4px;
-  margin-top: 0;
-  margin-left: 0;
-  font-size: 0.85rem;
-  transition: background 0.2s;
-}
-
-.job-address-row:hover {
-  background: #ffcccc;
-}
-
-.job-address-row-left {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.25rem;
-  flex-shrink: 0;
-}
-
-.job-address-row .toggle-btn {
-  font-size: 0.9rem;
-}
-
-.job-address-summary {
+.job-address-inline .address-text {
   flex: 1;
-  color: #666;
-  padding: 0.25rem 0;
-}
-
-.job-address-expanded {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  flex: 1;
-  padding: 0;
-}
-
-.address-field {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  font-size: 0.8rem;
-}
-
-.address-field strong {
-  min-width: 80px;
-  flex-shrink: 0;
-  color: #667eea;
 }
 
 /**

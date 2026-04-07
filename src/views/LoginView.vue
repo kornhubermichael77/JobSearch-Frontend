@@ -295,17 +295,6 @@ const clearForm = () => {
             ✨ Registrierung
           </button>
         </li>
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            :class="{ active: activeTab === 'reset' }"
-            @click="switchTab('reset')"
-            type="button"
-            role="tab"
-          >
-            🔑 Passwort vergessen
-          </button>
-        </li>
       </ul>
 
       <!-- Error Alert -->
@@ -365,9 +354,18 @@ const clearForm = () => {
         </button>
 
         <!-- Info Box -->
-        <div class="alert alert-info mt-3 mb-0 small">
+        <div class="alert alert-info mt-3 mb-2 small">
           <strong>Demo Credentials:</strong> username: <code>test1</code>, password: <code>test1234</code>
         </div>
+        
+        <!-- Forgot Password Link -->
+        <button
+          type="button"
+          @click="switchTab('reset')"
+          class="btn btn-link d-block w-100"
+        >
+          🔑 Passwort vergessen?
+        </button>
       </form>
 
       <!-- REGISTER TAB -->
@@ -570,11 +568,6 @@ const clearForm = () => {
           </button>
         </div>
       </form>
-    </div>
-
-    <!-- Footer -->
-    <div class="login-footer text-center mt-4 text-muted small">
-      <p>JobSearch Password Recovery</p>
     </div>
   </div>
 </template>

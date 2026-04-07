@@ -98,6 +98,9 @@ export const addressApi = {
   // GET /api/addresses/{id}
   getById: (id) => axiosInstance.get(`/addresses/${id}`),
 
+  // POST /api/addresses (standalone, keine Company erforderlich)
+  create: (data) => axiosInstance.post('/addresses', data),
+
   // POST /api/companies/{companyId}/addresses
   createForCompany: (companyId, data) =>
     axiosInstance.post(`/companies/${companyId}/addresses`, data),
@@ -129,6 +132,10 @@ export const jobApi = {
 
   // PUT /api/jobs/{id}
   update: (id, data) => axiosInstance.put(`/jobs/${id}`, data),
+
+  // PATCH /api/jobs/{id}/addressId (aktualisiere nur die addressId)
+  updateAddressId: (id, addressId) =>
+    axiosInstance.patch(`/jobs/${id}/addressId`, { addressId }),
 
   // DELETE /api/jobs/{id}
   delete: (id) => axiosInstance.delete(`/jobs/${id}`),
