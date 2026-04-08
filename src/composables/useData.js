@@ -378,6 +378,87 @@ const availablePeople = computed(() => {
 
 /**
  * ============================================
+ * Job Save Event - Filter Adjustment
+ * ============================================
+ */
+
+/**
+ * Nach Job CREATE/UPDATE aufrufen
+ * 
+ * 1. Refresh allJobsForFilter (um neuen/geänderten Job in Dropdown zu zeigen)
+ * 2. Überprüfe aktive Filter - wenn zu restriktiv für neuen Job → lockern
+ * 
+ * Beispiel: User erstellt Job mit Status "REJECTED", aber Filter ist auf "APPLIED"
+ *          → lockere Filter zurück auf null, damit neuer Job sofort sichtbar ist
+ */
+export const refreshJobFilterAfterSave = async (savedJob) => {
+  try {
+    console.log('[useData] 🔄 refreshJobFilterAfterSave aufgerufen für Job:', {
+      jobId: savedJob.id,
+      status: savedJob.status,
+      currentFilters: { jobId: filters.jobId, jobStatus: filters.jobStatus }
+    });
+
+    // 1. Lade allJobsForFilter neu vom Backend
+    const allJobsResponse = await jobApi.getAllForFilter();
+    allJobsForFilter.value = allJobsResponse.data;
+    console.log('[useData] ✅ allJobsForFilter aktualisiert:', {
+      newCount: allJobsForFilter.value.length,
+      savedJobNow: allJobsForFilter.value.find(j => j.id === savedJob.id)
+    });
+
+    // 2. Validiere Filter: sind sie noch kompatibel mit dem neuen/geänderten Job?
+    const filterAdjustment = {
+      statusAdjusted: false,
+      jobIdAdjusted: false
+    };
+
+    // Wenn jobStatus Filter aktiv: Prüfe ob savedJob diesen Status hat
+    if (filters.jobStatus !== null) {
+      const jobHasFilteredStatus = savedJob.status === filters.jobStatus;
+      
+      if (!jobHasFilteredStatus) {
+        console.log('[useData] 🔧 Filter-Anpassung: jobStatus ist zu restriktiv');
+        console.log(`         Job hat Status "${savedJob.status}", aber Filter erfordert "${filters.jobStatus}"`);
+        console.log('         → Lockere jobStatus auf null');
+        
+        filters.jobStatus = null;
+        filterAdjustment.statusAdjusted = true;
+      }
+    }
+
+    // Wenn jobId Filter aktiv: Prüfe ob savedJob die selbe ID hat
+    if (filters.jobId !== null) {
+      const isSelectedJob = savedJob.id === filters.jobId;
+      
+      if (!isSelectedJob) {
+        console.log('[useData] 🔧 Filter-Anpassung: jobId ist zu restriktiv');
+        console.log(`         Job ID ist "${savedJob.id}", aber Filter erfordert "${filters.jobId}"`);
+        console.log('         → Lockere jobId auf null');
+        
+        filters.jobId = null;
+        filterAdjustment.jobIdAdjusted = true;
+      }
+    }
+
+    if (filterAdjustment.statusAdjusted || filterAdjustment.jobIdAdjusted) {
+      console.log('[useData] ✅ Filter angepasst, UI aktualisiert sich automatisch via Watcher');
+    } else {
+      console.log('[useData] ℹ️ Filter sind kompatibel, keine Anpassung nötig');
+    }
+
+    return filterAdjustment;
+  } catch (err) {
+    console.error('[useData] ❌ Fehler in refreshJobFilterAfterSave:', {
+      message: err.message,
+      jobId: savedJob?.id
+    });
+    throw err; // Bubble up zum Aufrufer
+  }
+};
+
+/**
+ * ============================================
  * CRUD Operationen (Phase 3+)
  * ============================================
  */
@@ -436,8 +517,7 @@ export function useData() {
     setCommunicationStatusFilter,
     setPersonFilter,
     setFromDateFilter,
-    resetFilters,
-  };
+    resetFilters,    refreshJobFilterAfterSave,  };
 }
 
 export default useData;

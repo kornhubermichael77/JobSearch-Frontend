@@ -22,7 +22,8 @@ import { ref, computed, nextTick } from 'vue';
 import TimelineItem from './TimelineItem.vue';
 import AddressItem from './AddressItem.vue';
 import JobItem from './JobItem.vue';
-import { addressApi, jobApi } from '@/services/api.js';
+import CompanyItem from './CompanyItem.vue';
+import { addressApi, jobApi, companyApi } from '@/services/api.js';
 import { loadAddressForJob } from '@/composables/useData.js';
 
 const props = defineProps({
@@ -102,6 +103,12 @@ const addressDropdownOpen = ref({});
  * State für Create-Mode eines neuen Jobs (bei Company)
  */
 const creatingJobForCompanyId = ref(null);
+
+/**
+ * State für Company Create/Edit
+ */
+const creatingCompanyId = ref(null);
+const editingCompanyId = ref(null);
 
 /**
  * Verfügbare Kommunikationstypen
@@ -313,6 +320,23 @@ watch(
 );
 
 /**
+ * TRACKING: editingCompanyId watch - zeige wenn edit mode aktiviert wird
+ */
+watch(
+  () => editingCompanyId.value,
+  (newValue, oldValue) => {
+    if (newValue && newValue !== oldValue) {
+      const company = props.companies?.find(c => c.id === newValue);
+      console.log('🟠 [HierarchicalDataTree] editingCompanyId geändert - CompanyItem wird mit FALSCHEN Buttons angezeigt!', {
+        companyId: newValue,
+        companyName: company?.name,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+);
+
+/**
  * Toggle Methods
  */
 const toggleCompany = (companyId) => {
@@ -320,6 +344,10 @@ const toggleCompany = (companyId) => {
     expandedCompanies.value.delete(companyId);
   } else {
     expandedCompanies.value.add(companyId);
+    // Wenn Firma expandiert wird, lade Jobs falls noch nicht geladen (lazy-loading)
+    if (!props.jobsMap?.[companyId]) {
+      emit('load-jobs', companyId);
+    }
   }
 };
 
@@ -666,6 +694,74 @@ const handleJobAddressDelete = async (job) => {
 
 /**
  * ============================================
+ * COMPANY Handlers (Create/Update/Delete)
+ * ============================================
+ */
+
+const startCreateCompany = () => {
+  creatingCompanyId.value = true;
+};
+
+const cancelCreateCompany = () => {
+  creatingCompanyId.value = null;
+};
+
+const startEditCompany = (companyId) => {
+  console.log('🔵 [HierarchicalDataTree] startEditCompany() aufgerufen', { companyId });
+  editingCompanyId.value = companyId;
+};
+
+const cancelEditCompany = () => {
+  editingCompanyId.value = null;
+};
+
+const handleCompanyUpdate = (company) => {
+  if (!company?.id) {
+    console.error('❌ Company ohne ID erhalten:', company);
+    return;
+  }
+
+  const existingIndex = props.companies.findIndex(c => c.id === company.id);
+  
+  if (existingIndex !== -1) {
+    const oldCompany = props.companies[existingIndex];
+    if (!company.addresses) {
+      company.addresses = oldCompany.addresses;
+    }
+    props.companies[existingIndex] = company;
+    console.log('✅ Firma aktualisiert:', company.id);
+    cancelEditCompany();
+  } else {
+    if (!company.addresses) {
+      company.addresses = [];
+    }
+    props.companies.unshift(company);
+    console.log('✅ Neue Firma erstellt:', company.id);
+    cancelCreateCompany();
+  }
+};
+
+const handleCompanyDelete = async (companyId) => {
+  try {
+    await companyApi.delete(companyId);
+
+    const index = props.companies.findIndex(c => c.id === companyId);
+    if (index !== -1) {
+      props.companies.splice(index, 1);
+      console.log('✅ Firma gelöscht:', companyId);
+    }
+
+    if (props.jobsMap && props.jobsMap[companyId]) {
+      delete props.jobsMap[companyId];
+    }
+  } catch (err) {
+    console.error('❌ Fehler beim Löschen der Firma:', err);
+    alert('Fehler beim Löschen der Firma: ' + (err.response?.data?.message || err.message));
+  }
+};
+
+/**
+ * ============================================
  * JOB Handlers (Create/Update/Delete)
  * ============================================
  */
@@ -763,17 +859,6 @@ const isCommunicationExpanded = (commId) =>
   expandedCommunications.value.has(commId);
 
 /**
- * Lade Jobs wenn Firma expandiert wird (lazy loading)
- */
-const handleCompanyClick = (company) => {
-  toggleCompany(company.id);
-  // Lazy load Jobs falls noch nicht geladen
-  if (!props.jobsMap?.[company.id]) {
-    emit('load-jobs', company.id);
-  }
-};
-
-/**
  * Helper: Hole gefilterte Jobs für Firma
  * Wendet Job- und Status-Filter an
  */
@@ -807,79 +892,27 @@ const isTimelineLoading = (jobId) => {
         :key="company.id"
         class="company-item"
       >
-        <!-- COMPANY HEADER -->
-        <div class="company-header" :class="{ expanded: isCompanyExpanded(company.id) }">
-          <!-- LEFT: Toggle Button + Actions (nur Actions im expanded) -->
-          <div class="company-header-left">
-            <button
-              class="toggle-btn"
-              :aria-expanded="isCompanyExpanded(company.id)"
-              @click="handleCompanyClick(company)"
-              title="Expand/Collapse"
-            >
-              {{ isCompanyExpanded(company.id) ? '▼' : '▶' }}
-            </button>
+        <!-- Edit Mode: CompanyItem -->
+        <CompanyItem
+          v-if="editingCompanyId === company.id"
+          :company="company"
+          :mode="'edit'"
+          @update="handleCompanyUpdate($event)"
+          @delete="handleCompanyDelete(company.id)"
+          @cancel="cancelEditCompany()"
+        />
 
-            <!-- Action Buttons (nur im expanded) -->
-            <div v-if="isCompanyExpanded(company.id)" class="company-actions">
-              <button class="btn btn-sm btn-outline-primary" title="Bearbeiten">
-                ✏️
-              </button>
-              <button class="btn btn-sm btn-outline-danger" title="Löschen">
-                🗑️
-              </button>
-            </div>
-          </div>
-
-          <!-- MIDDLE: Company Info (Name, Summary, URLs, Personen) -->
-          <div class="company-info flex-grow-1">
-            <h4 class="company-name">{{ company.name }}</h4>
-            
-            <!-- Summary -->
-            <h5 v-if="company.summary" class="company-summary">{{ company.summary }}</h5>
-
-            <!-- Expandierte Details: URLs und Personen -->
-            <div v-if="isCompanyExpanded(company.id)" class="company-details">
-              <!-- URLs -->
-              <div v-if="company.url || company.urlJobs" class="company-links">
-                <a v-if="company.url" :href="company.url" target="_blank">
-                  {{ company.url }}
-                </a>
-                <a v-if="company.urlJobs" :href="company.urlJobs" target="_blank" class="ms-2">
-                  (Jobs)
-                </a>
-              </div>
-
-              <!-- Tel Person -->
-              <div v-if="company.telPerson || company.tel" class="company-person">
-                <strong>   Ansprechperson (Tel):</strong>
-                <span v-if="company.telPerson">{{ company.telPerson }}</span>
-                <span v-if="company.tel" class="ms-2">
-                  <a :href="`tel:${company.tel}`">{{ company.tel }}</a>
-                </span>
-              </div>
-
-              <!-- Mail Person -->
-              <div v-if="company.mailPerson || company.mail" class="company-person">
-                <strong>   Ansprechperson (Mail):</strong>
-                <span v-if="company.mailPerson">{{ company.mailPerson }}</span>
-                <span v-if="company.mail" class="ms-2">
-                  <a :href="`mailto:${company.mail}`">{{ company.mail }}</a>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- RIGHT: Badges (nur im collapsed-Zustand, untereinander) -->
-          <div v-if="!isCompanyExpanded(company.id)" class="company-badges">
-            <span class="badge bg-light text-dark">
-              {{ company.addresses?.length || 0 }} 📍
-            </span>
-            <span class="badge bg-light text-dark">
-              {{ company.jobCount || 0 }} 💼
-            </span>
-          </div>
-        </div>
+        <!-- View Mode: CompanyItem -->
+        <CompanyItem
+          v-else
+          :company="company"
+          :mode="'view'"
+          :is-expanded="isCompanyExpanded(company.id)"
+          :job-count="getJobsForCompany(company.id).length"
+          @toggle="toggleCompany(company.id)"
+          @edit-request="startEditCompany(company.id)"
+          @delete="handleCompanyDelete(company.id)"
+        />
 
         <!-- ADRESSEN (zwischen Header und Content) -->
         <div v-if="isCompanyExpanded(company.id)" class="addresses-list">
@@ -1174,14 +1207,14 @@ const isTimelineLoading = (jobId) => {
                   <div class="timeline-filters">
                     <button
                       class="btn btn-sm btn-info"
-                      @click="emit('filter-by-company')"
+                      @click="emit('filter-by-company', company.id)"
                       title="Filter auf diese Firma setzen"
                     >
                       🔍 Firma
                     </button>
                     <button
                       class="btn btn-sm btn-info"
-                      @click="emit('filter-by-job')"
+                      @click="emit('filter-by-job', job.id)"
                       title="Filter auf diesen Job setzen"
                     >
                       🔍 Job
@@ -1223,9 +1256,19 @@ const isTimelineLoading = (jobId) => {
         </div>
       </div>
 
-      <!-- Create new Company Button -->
-      <div class="create-company-section">
-        <button class="btn btn-primary">
+      <!-- Create new Company Form or Button -->
+      <CompanyItem
+        v-if="creatingCompanyId"
+        :company="null"
+        :mode="'create'"
+        @update="handleCompanyUpdate($event)"
+        @delete="cancelCreateCompany"
+      />
+      <div v-else class="create-company-section">
+        <button 
+          class="btn btn-primary"
+          @click="startCreateCompany"
+        >
           + Neue Firma
         </button>
       </div>
@@ -1233,8 +1276,23 @@ const isTimelineLoading = (jobId) => {
 
     <!-- Empty State -->
     <div v-else class="empty-state text-center py-5">
-      <p class="text-muted">🏢 Noch keine Firmen vorhanden</p>
-      <button class="btn btn-primary">+ Erste Firma erstellen</button>
+      <!-- Create Company Form or Button (gleiche Logik wie oben) -->
+      <CompanyItem
+        v-if="creatingCompanyId"
+        :company="null"
+        :mode="'create'"
+        @update="handleCompanyUpdate($event)"
+        @delete="cancelCreateCompany"
+      />
+      <div v-else>
+        <p class="text-muted">🏢 Noch keine Firmen vorhanden</p>
+        <button 
+          class="btn btn-primary"
+          @click="startCreateCompany"
+        >
+          + Erste Firma erstellen
+        </button>
+      </div>
     </div>
   </div>
 </template>

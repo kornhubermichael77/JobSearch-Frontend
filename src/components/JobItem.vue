@@ -13,6 +13,7 @@
 
 import { ref, reactive, nextTick, watch } from 'vue';
 import { jobApi } from '@/services/api.js';
+import { useData } from '@/composables/useData.js';
 
 const props = defineProps({
   job: {
@@ -176,6 +177,13 @@ const saveChanges = async () => {
 
     // Emit updated job
     emit('update', response.data);
+
+    // 🔄 Refresh Job-Filter nach Save
+    // - Lädt allJobsForFilter neu
+    // - Überprüft ob aktive Filter noch kompatibel sind
+    // - Lockert zu restriktive Filter (z.B. wenn neuer Job anderen Status hat)
+    const { refreshJobFilterAfterSave } = useData();
+    await refreshJobFilterAfterSave(response.data);
 
     // Mode beenden
     isEditMode.value = false;

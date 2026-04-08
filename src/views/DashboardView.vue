@@ -110,6 +110,23 @@ const handleReset = async () => {
 };
 
 /**
+ * Timeline Filter Handlers (Filter auf Firma / Job setzen)
+ */
+const handleTimelineFilterByCompany = async (companyId) => {
+  await setCompanyFilter(companyId);
+};
+
+const handleTimelineFilterByJob = async (jobId) => {
+  // Finde die Company des Jobs
+  const job = allJobsForFilter.value?.find(j => j.id === jobId);
+  if (job) {
+    // Setze zuerst die Company, dann den Job
+    await setCompanyFilter(job.companyId);
+    await setJobFilter(jobId);
+  }
+};
+
+/**
  * ============================================
  * Data Loading Handlers (von HierarchicalDataTree)
  * ============================================
@@ -231,6 +248,8 @@ const handleLogout = () => {
             @load-timeline="handleLoadTimeline"
             @next-page="(jobId) => loadTimelineForJob(jobId, (timelines[jobId]?.currentPage || 0) + 1)"
             @prev-page="(jobId) => loadTimelineForJob(jobId, Math.max(0, (timelines[jobId]?.currentPage || 1) - 1))"
+            @filter-by-company="handleTimelineFilterByCompany"
+            @filter-by-job="handleTimelineFilterByJob"
           />
         </div>
       </div>
