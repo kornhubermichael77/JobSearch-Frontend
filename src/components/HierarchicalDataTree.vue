@@ -18,7 +18,7 @@
  * - Modern mit Bootstrap + Custom CSS
  */
 
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import TimelineItem from './TimelineItem.vue';
 import AddressItem from './AddressItem.vue';
 import JobItem from './JobItem.vue';
@@ -28,14 +28,25 @@ import { loadAddressForJob } from '@/composables/useData.js';
 const props = defineProps({
   companies: Array,
   jobsMap: Object, // { [companyId]: [jobs...] }
+  allJobsForFilter: Array, // ALLE Jobs vom Backend für Filter-Matching
   timelinesMap: Object, // { [jobId]: timeline_data }
   loadingJobsMap: Object,
   loadingTimelineMap: Object,
+  filters: {
+    type: Object,
+    default: () => ({}),
+  },
   communicationStatuses: {
     type: Array,
     default: () => [],
   },
+  jobStatuses: {
+    type: Array,
+    default: () => [],
+  },
 });
+
+console.log('[Filter Debug] HierarchicalDataTree Props empfangen:', { filters: props.filters });
 
 const emit = defineEmits([
   'load-jobs',
@@ -109,6 +120,125 @@ const initializeExpanded = (companies) => {
   expandedCompanies.value = new Set();
 };
 
+/**
+ * ============================================
+ * Filter-Hilfsfunktionen für Job & Status Filter
+ * ============================================
+ */
+
+/**
+ * Prüfe ob Firma passende Jobs zum aktuellen Filter hat
+ * 
+ * Priorität:
+ * 1. Nutze lokal gecachte Jobs (wenn Firma bereits aufgeklappt war)
+ * 2. Fallback zu allJobsForFilter vom Backend (wenn Firma noch nicht aufgeklappt war)
+ * 
+ * WICHTIG: Diese Funktion wird nur aufgerufen wenn ein Filter aktiv ist!
+ */
+const hasMatchingJobs = (company) => {
+  // Option 1: Jobs aus lokalem Cache (wenn Firma bereits aufgeklappt war)
+  const cachedJobs = props.jobsMap?.[company.id] || [];
+  
+  // Option 2: Jobs aus allJobsForFilter (für alle Jobs auch von nicht geöffneten Firmen)
+  const backendJobs = props.allJobsForFilter?.filter(j => j.companyId === company.id) || [];
+  
+  // Nutze gecachte Jobs wenn vorhanden, sonst Backend-Jobs
+  const jobs = cachedJobs.length > 0 ? cachedJobs : backendJobs;
+  
+  if (jobs.length === 0) {
+    console.log(`[Filter Debug] Firma ${company.id} (${company.name}) - keine lokalen oder Backend-Jobs gefunden`);
+    return false;
+  }
+  
+  // Job-Filter aktiv → hat diese Firma den gefilterten Job
+  if (props.filters?.jobId) {
+    const hasMatch = jobs.some(j => j.id === props.filters.jobId);
+    console.log(`[Filter Debug] Firma ${company.id} (${company.name}) - Job-Filter ${props.filters.jobId}: ${hasMatch}`, { jobs: jobs.map(j => j.id), source: cachedJobs.length > 0 ? 'cache' : 'backend' });
+    return hasMatch;
+  }
+  
+  // Status-Filter aktiv → hat diese Firma einen Job mit diesem Status
+  if (props.filters?.jobStatus) {
+    const hasMatch = jobs.some(j => j.status === props.filters.jobStatus);
+    console.log(`[Filter Debug] Firma ${company.id} (${company.name}) - Status-Filter ${props.filters.jobStatus}: ${hasMatch}`, { jobs: jobs.map(j => ({ id: j.id, status: j.status })), source: cachedJobs.length > 0 ? 'cache' : 'backend' });
+    return hasMatch;
+  }
+  
+  // Sollte nie vorkommen wenn der Caller korrekt überprüft ob Filter aktiv sind
+  return false;
+};
+
+/**
+ * Gib nur die sichtbaren Jobs einer Firma zurück (gefiltert)
+ * 
+ * Priority:
+ * 1. Nutze lokal gecachte Jobs (wenn Firma bereits aufgeklappt war)
+ * 2. Fallback zu allJobsForFilter vom Backend (wenn Firma noch nicht aufgeklappt war)
+ */
+const getVisibleJobsForCompany = (companyId) => {
+  // Option 1: Jobs aus lokalem Cache (wenn Firma bereits aufgeklappt war)
+  const cachedJobs = props.jobsMap?.[companyId] || [];
+  
+  // Option 2: Jobs aus allJobsForFilter (für alle Jobs auch von nicht geöffneten Firmen)
+  const backendJobs = props.allJobsForFilter?.filter(j => j.companyId === companyId) || [];
+  
+  // Nutze gecachte Jobs wenn vorhanden, sonst Backend-Jobs
+  const allJobs = cachedJobs.length > 0 ? cachedJobs : backendJobs;
+  
+  // Kein Filter aktiv → alle Jobs
+  if (!props.filters?.jobId && !props.filters?.jobStatus) {
+    console.log(`[Filter Debug] getVisibleJobsForCompany(${companyId}) kein Filter: ${allJobs.length} Jobs (source: ${cachedJobs.length > 0 ? 'cache' : 'backend'})`);
+    return allJobs;
+  }
+  
+  // Job-Filter aktiv → nur dieser Job
+  if (props.filters?.jobId) {
+    const visible = allJobs.filter(j => j.id === props.filters.jobId);
+    console.log(`[Filter Debug] getVisibleJobsForCompany(${companyId}) Job-Filter ${props.filters.jobId}: ${visible.length} sichtbare Jobs von ${allJobs.length} (source: ${cachedJobs.length > 0 ? 'cache' : 'backend'})`, { visible: visible.map(j => j.id), all: allJobs.map(j => j.id) });
+    return visible;
+  }
+  
+  // Status-Filter aktiv → nur Jobs mit diesem Status
+  if (props.filters?.jobStatus) {
+    const visible = allJobs.filter(j => j.status === props.filters.jobStatus);
+    console.log(`[Filter Debug] getVisibleJobsForCompany(${companyId}) Status-Filter ${props.filters.jobStatus}: ${visible.length} sichtbare Jobs von ${allJobs.length} (source: ${cachedJobs.length > 0 ? 'cache' : 'backend'})`, { visible: visible.map(j => ({ id: j.id, status: j.status })), all: allJobs.map(j => ({ id: j.id, status: j.status })) });
+    return visible;
+  }
+  
+  return allJobs;
+};
+
+/**
+ * Finde die Job-Element zum Scrollen
+ * 
+ * Priority:
+ * 1. Suche in lokal gecachten Jobs
+ * 2. Fallback zu allJobsForFilter vom Backend
+ */
+const getJobElementForScroll = () => {
+  if (!props.filters?.jobId) return null;
+  
+  // Finde den Job in den Daten
+  for (const company of props.companies || []) {
+    // Priority 1: Gecachte Jobs
+    const cachedJobs = props.jobsMap?.[company.id] || [];
+    let job = cachedJobs.find(j => j.id === props.filters.jobId);
+    
+    // Priority 2: Backend Jobs
+    if (!job) {
+      const backendJobs = props.allJobsForFilter?.filter(j => j.companyId === company.id) || [];
+      job = backendJobs.find(j => j.id === props.filters.jobId);
+    }
+    
+    if (job) {
+      // Versuche Element zu finden
+      const element = document.querySelector(`[data-job-id="${job.id}"]`);
+      return element;
+    }
+  }
+  return null;
+};
+
 // Watchers um initial state zu setzen
 import { watch } from 'vue';
 watch(
@@ -117,6 +247,67 @@ watch(
     if (newCompanies?.length > 0) {
       initializeExpanded(newCompanies);
     }
+  },
+  { immediate: true }
+);
+
+/**
+ * ============================================
+ * Watcher für Job/Status Filter
+ * Auto-Expand Firmen mit matchenden Jobs
+ * Auto-Collapse Firmen ohne matchende Jobs
+ * Auto-Scroll zum gefilterten Job
+ * ============================================
+ */
+watch(
+  [() => props.filters?.jobId, () => props.filters?.jobStatus],
+  ([newJobId, newStatus]) => {
+    console.log('[Filter Debug] Watcher getriggert! Filter geändert:', { jobId: newJobId, status: newStatus });
+    
+    if (!props.companies) {
+      console.warn('[Filter Debug] ⚠️ props.companies nicht verfügbar!');
+      return;
+    }
+    
+    // WICHTIG: Nur expandieren wenn tatsächlich ein Filter aktiv ist
+    // Wenn beide null → alle collapsed
+    const filterActive = newJobId !== null || newStatus !== null;
+    console.log('[Filter Debug] Filter aktiv?', filterActive, { jobId: newJobId, status: newStatus });
+    
+    if (!filterActive) {
+      console.log('[Filter Debug] ℹ️ Kein Filter aktiv → alle Companies werden zugeklappt');
+      expandedCompanies.value = new Set();
+      return;
+    }
+    
+    console.log('[Filter Debug] Companies vorhanden:', props.companies.map(c => ({ id: c.id, name: c.name })));
+    
+    // Berechne welche Firmen expanded sein sollen
+    const newExpandedSet = new Set();
+    
+    for (const company of props.companies) {
+      if (hasMatchingJobs(company)) {
+        newExpandedSet.add(company.id);
+        console.log(`[Filter Debug] ✅ Firma ${company.id} ${company.name} wird EXPANDIERT`);
+      } else {
+        console.log(`[Filter Debug] ❌ Firma ${company.id} ${company.name} wird ZUGEKLAPPT`);
+      }
+    }
+    
+    console.log('[Filter Debug] Neue expandedCompanies:', Array.from(newExpandedSet));
+    expandedCompanies.value = newExpandedSet;
+    
+    // Auto-Scroll zum gefilterten Job falls vorhanden
+    // Wichtig: nextTick statt setTimeout um sicherzustellen, dass DOM updated ist
+    nextTick(() => {
+      const jobElement = getJobElementForScroll();
+      if (jobElement) {
+        console.log(`[Filter Debug] ✅ Job-Element gefunden, scroll zu:`, jobElement);
+        jobElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else {
+        console.log('[Filter Debug] ⚠️ Kein Job-Element für Scroll gefunden');
+      }
+    });
   },
   { immediate: true }
 );
@@ -583,10 +774,13 @@ const handleCompanyClick = (company) => {
 };
 
 /**
- * Helper: Hole Jobs für Firma
+ * Helper: Hole gefilterte Jobs für Firma
+ * Wendet Job- und Status-Filter an
  */
 const getJobsForCompany = (companyId) => {
-  return props.jobsMap?.[companyId] || [];
+  const visibleJobs = getVisibleJobsForCompany(companyId);
+  console.log(`[Filter Debug] getJobsForCompany(${companyId}) rendert ${visibleJobs.length} Jobs`);
+  return visibleJobs;
 };
 
 /**
@@ -747,6 +941,7 @@ const isTimelineLoading = (jobId) => {
             <div
               v-for="job in getJobsForCompany(company.id)"
               :key="`job-${job.id}`"
+              :data-job-id="job.id"
               class="job-wrapper"
             >
               <!-- 
@@ -760,7 +955,7 @@ const isTimelineLoading = (jobId) => {
                 :company-id="company.id"
                 :is-expanded="isJobExpanded(job.id)"
                 :mode="'view'"
-                :communication-statuses="props.communicationStatuses"
+                :job-statuses="props.jobStatuses"
                 @toggle="toggleJob(job.id)"
                 @update="handleJobUpdate($event)"
                 @delete="handleJobDelete($event, company.id)"
@@ -1020,7 +1215,7 @@ const isTimelineLoading = (jobId) => {
               :company-id="company.id"
               :is-expanded="true"
               :mode="'create'"
-              :communication-statuses="props.communicationStatuses"
+              :job-statuses="props.jobStatuses"
               @update="handleJobUpdate($event); cancelCreateJob();"
               @delete="cancelCreateJob()"
             />

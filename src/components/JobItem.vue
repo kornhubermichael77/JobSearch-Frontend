@@ -32,7 +32,7 @@ const props = defineProps({
     enum: ['view', 'edit', 'create'],
     default: 'view',
   },
-  communicationStatuses: {
+  jobStatuses: {
     type: Array,
     default: () => [],
   },
@@ -93,14 +93,25 @@ const startEdit = () => {
     originalData.value = {};
   } else {
     // EDIT: Kopiere Job-Daten
-    // WICHTIG: found hat datetime-Format vom Backend (2026-03-24T10:00:00)
+    // WICHTIG: found kann DateTime-String (2026-03-24T10:00:00) oder Date-Objekt sein
     // aber input type="date" braucht nur yyyy-MM-dd Format
+    let foundDate = '';
+    if (props.job?.found) {
+      if (typeof props.job.found === 'string') {
+        // String: extrahiere Date-Teil
+        foundDate = props.job.found.split('T')[0];
+      } else if (props.job.found instanceof Date) {
+        // Date-Objekt: formatiere zu yyyy-MM-dd
+        foundDate = props.job.found.toISOString().split('T')[0];
+      }
+    }
+    
     originalData.value = {
-      found: props.job?.found ? props.job.found.split('T')[0] : '',
+      found: foundDate,
       source: props.job?.source || '',
       url: props.job?.url || '',
       text: props.job?.text || '',
-      status: props.job?.status || 'APPLIED',
+      status: props.job?.status || 'OFFEN',
       mail: props.job?.mail || '',
       mailPerson: props.job?.mailPerson || '',
       tel: props.job?.tel || '',
@@ -263,21 +274,21 @@ const formatJobSummary = () => {
 };
 
 /**
- * Job Status Enum Values (von Parent über communicationStatuses API)
+ * Job Status Enum Values (von Parent über jobStatuses API)
  * Wenn nicht verfügbar, nutze Fallback-Werte
  */
 const statusOptions = ref([]);
 
-// Beobachte communicationStatuses und aktualisiere statusOptions
+// Beobachte jobStatuses und aktualisiere statusOptions
 watch(
-  () => props.communicationStatuses,
+  () => props.jobStatuses,
   (newStatuses) => {
     if (newStatuses && newStatuses.length > 0) {
-      // Extrahiere Status-IDs aus communicationStatuses Array
+      // Extrahiere Status-IDs aus jobStatuses Array
       statusOptions.value = newStatuses.map(s => s.id || s);
     } else {
       // Fallback: Hardcodierte Standard-Status
-      statusOptions.value = ['APPLIED', 'INTERVIEW', 'REJECTED', 'OFFER'];
+      statusOptions.value = ['OFFEN', 'BEWORBEN', 'INFORMATION_ERHALTEN', 'ZUSAGE', 'ABSAGE'];
     }
   },
   { immediate: true }

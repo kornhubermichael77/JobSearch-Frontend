@@ -139,6 +139,14 @@ export const jobApi = {
 
   // DELETE /api/jobs/{id}
   delete: (id) => axiosInstance.delete(`/jobs/${id}`),
+
+  // GET /api/job-status (Enum-Werte für Job Status)
+  getStatuses: () => axiosInstance.get('/job-status'),
+
+  // GET /api/jobs/for-filter (Alle Jobs für Dropdown mit Filtermöglichkeit)
+  // Params: companyId (optional), status (optional)
+  getAllForFilter: (params = {}) =>
+    axiosInstance.get('/jobs/for-filter', { params }),
 };
 
 /**

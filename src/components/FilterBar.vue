@@ -16,13 +16,15 @@
  * - Änderungen triggern Filter-Methoden
  */
 
-import { computed } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
+import JobFilterOption from './JobFilterOption.vue';
 
 const props = defineProps({
   filters: Object, // filters reactive object
   companies: Array,
   currentCompany: Object,
   jobs: Array, // Array von Jobs der aktuellen Firma
+  allJobsForFilter: Array, // ALLE Jobs für Dropdown (auch nicht geöffnete Firmen)
   jobStatuses: Array,
   communicationStatuses: Array,
   communicationTypes: Array,
@@ -39,6 +41,66 @@ const emit = defineEmits([
   'update:fromDate',
   'reset',
 ]);
+
+/**
+ * Smart Job-Filtering:
+ * - Wenn companyId Filter aktiv: nur Jobs dieser Firma
+ * - Wenn jobStatus Filter aktiv: nur Jobs mit diesem Status
+ * - Kombiniert beide Filter (AND-Logic)
+ * 
+ * Priority:
+ * 1. Verwende allJobsForFilter wenn vorhanden
+ * 2. Fallback zu props.jobs wenn allJobsForFilter leer/undefined ist
+ */
+const visibleJobsForDropdown = computed(() => {
+  // Nutze ALLE Jobs wenn verfügbar, sonst fallback zu filtered Jobs
+  const availableJobs = (props.allJobsForFilter && props.allJobsForFilter.length > 0) 
+    ? props.allJobsForFilter 
+    : (props.jobs && props.jobs.length > 0)
+      ? props.jobs 
+      : [];
+
+  if (!availableJobs.length) {
+    console.log('[FilterBar] ⚠️ Keine Jobs verfügbar:', {
+      allJobsForFilter: props.allJobsForFilter?.length,
+      jobs: props.jobs?.length,
+    });
+    return [];
+  }
+
+  let filtered = availableJobs;
+
+  // Filter nach Company (wenn ausgewählt)
+  if (props.filters?.companyId) {
+    filtered = filtered.filter(job => job.companyId === props.filters.companyId);
+    console.log('[FilterBar] 🏢 Nach Company gefiltert:', {
+      companyId: props.filters.companyId,
+      before: availableJobs.length,
+      after: filtered.length
+    });
+  }
+
+  // Filter nach Job-Status (wenn ausgewählt)
+  if (props.filters?.jobStatus) {
+    filtered = filtered.filter(job => job.status === props.filters.jobStatus);
+    console.log('[FilterBar] 📊 Nach Status gefiltert:', {
+      jobStatus: props.filters.jobStatus,
+      before: availableJobs.length,
+      after: filtered.length
+    });
+  }
+
+  console.log('[FilterBar] ✅ visibleJobsForDropdown berechnet:', {
+    source: props.allJobsForFilter?.length > 0 ? 'allJobsForFilter' : 'jobs fallback',
+    totalAvailable: availableJobs.length,
+    companyFilter: props.filters?.companyId ? `${props.filters.companyId}` : 'none',
+    statusFilter: props.filters?.jobStatus ? `${props.filters.jobStatus}` : 'none',
+    resultCount: filtered.length,
+    samples: filtered.slice(0, 3).map(j => ({ id: j.id, source: j.source }))
+  });
+
+  return filtered;
+});
 
 /**
  * Handler für Filter-Änderungen
@@ -77,17 +139,64 @@ const handleFromDateChange = (date) => {
  * Styling Klassen für Dropdowns
  */
 const filterClass = 'form-select form-select-sm';
+
+/**
+ * State für Bootstrap Dropdown (Job)
+ */
+const showJobDropdown = ref(false);
+const jobDropdownRef = ref(null);
+
+/**
+ * Click-Away Handler - schließe Dropdown wenn daneben geklickt
+ */
+const handleClickOutside = (event) => {
+  if (jobDropdownRef.value && !jobDropdownRef.value.contains(event.target)) {
+    showJobDropdown.value = false;
+  }
+};
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside);
+  console.log('[FilterBar] 🎬 Mounted, Props beim Mount:', {
+    allJobsForFilter: props.allJobsForFilter?.length || 0,
+    jobs: props.jobs?.length || 0,
+    filters: props.filters
+  });
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
+  console.log('[FilterBar] 🛑 Unmounted');
+});
+
+/**
+ * Watcher: Beobachte allJobsForFilter auf Änderungen
+ * (DEBUG: Zeige, wenn Daten geladen werden)
+ */
+watch(() => props.allJobsForFilter, (newJobs) => {
+  console.log('[FilterBar] 👁️ Watcher triggered: allJobsForFilter changed:', {
+    newCount: newJobs?.length || 0,
+    oldCount: 'N/A',
+    firstFewJobs: newJobs?.slice(0, 2).map(j => ({ id: j.id, text: j.text, companyId: j.companyId }))
+  });
+}, { deep: false });
+
+/**
+ * Watcher: Beobachte Filter Änderungen
+ */
+watch(() => props.filters, (newFilters) => {
+  console.log('[FilterBar] 👁️ Watcher triggered: filters changed:', {
+    companyId: newFilters?.companyId,
+    jobStatus: newFilters?.jobStatus,
+    jobId: newFilters?.jobId
+  });
+}, { deep: true });
 </script>
 
 <template>
   <div class="filter-bar">
     <!-- Container mit Grid Layout -->
     <div class="filter-container">
-      <!-- Header -->
-      <div class="filter-header">
-        <h5 class="mb-0">🔍 Filter</h5>
-      </div>
-
       <!-- Filter Inputs (Grid 7 Spalten) -->
       <div class="filter-grid">
         <!-- 1️⃣ Firma -->
@@ -106,20 +215,61 @@ const filterClass = 'form-select form-select-sm';
           </select>
         </div>
 
-        <!-- 1️⃣.5️⃣ Job -->
+        <!-- 1️⃣.5️⃣ Job (Bootstrap Dropdown mit Custom-Items) -->
         <div class="filter-item">
-          <label for="filter-job" class="form-label small">Job</label>
-          <select
-            id="filter-job"
-            :class="filterClass"
-            :value="filters.jobId || ''"
-            @change="(e) => handleJobChange(Number(e.target.value) || null)"
+          <label class="form-label small">Job</label>
+          <div 
+            ref="jobDropdownRef"
+            class="dropdown filter-dropdown"
           >
-            <option value="">— Alle Jobs —</option>
-            <option v-for="job in jobs" :key="job.id" :value="job.id">
-              {{ job.source }} ({{ job.status }})
-            </option>
-          </select>
+            <button
+              class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start"
+              type="button"
+              @click="showJobDropdown = !showJobDropdown"
+              :aria-expanded="showJobDropdown"
+            >
+              <span v-if="!filters.jobId" class="text-muted">— Alle Jobs —</span>
+              <span v-else>
+                {{
+                  visibleJobsForDropdown.find(j => j.id === filters.jobId)?.source ||
+                  '(Job nicht gefunden)'
+                }}
+              </span>
+            </button>
+
+            <!-- Dropdown Menu (Bootstrap) -->
+            <ul
+              class="dropdown-menu w-100"
+              :class="{ show: showJobDropdown }"
+              @click.stop="showJobDropdown = false"
+            >
+              <!-- "Alle Jobs" Option -->
+              <li>
+                <a
+                  href="#"
+                  class="dropdown-item"
+                  :class="{ active: !filters.jobId }"
+                  @click.prevent="handleJobChange(null)"
+                >
+                  — Alle Jobs —
+                </a>
+              </li>
+
+              <li><hr class="dropdown-divider" /></li>
+
+              <!-- Job Items mit Custom Component -->
+              <li v-for="job in visibleJobsForDropdown" :key="job.id">
+                <a
+                  href="#"
+                  class="dropdown-item job-option"
+                  :class="{ active: filters.jobId === job.id }"
+                  @click.prevent="handleJobChange(job.id)"
+                >
+                  <JobFilterOption :job="job" />
+                </a>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <!-- 2️⃣ Job-Status -->
@@ -228,15 +378,6 @@ const filterClass = 'form-select form-select-sm';
   padding: 0 1rem;
 }
 
-.filter-header {
-  margin-bottom: 0.75rem;
-}
-
-.filter-header h5 {
-  font-weight: 600;
-  color: #333;
-}
-
 /**
  * Grid Layout: 7 Spalten (responsive)
  */
@@ -293,6 +434,57 @@ const filterClass = 'form-select form-select-sm';
 }
 
 /**
+ * Job Filter Dropdown (Bootstrap Dropdown mit Custom Items)
+ */
+.filter-dropdown {
+  position: relative;
+  width: 100%;
+}
+
+.filter-dropdown .dropdown-toggle {
+  color: #212529;
+  font-size: 0.875rem;
+  padding: 0.375rem 0.75rem;
+  border-color: #dee2e6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filter-dropdown .dropdown-toggle::after {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.filter-dropdown .dropdown-menu {
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.875rem;
+  min-width: auto;
+  width: 100%;
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.filter-dropdown .dropdown-item {
+  padding: 0.375rem 0.75rem;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.filter-dropdown .dropdown-item.job-option {
+  padding: 0.5rem 0.75rem;
+  display: block;
+}
+
+.filter-dropdown .dropdown-item:hover,
+.filter-dropdown .dropdown-item.active {
+  background-color: #e7f3ff;
+  color: #0066cc;
+}
+
+/**
  * Mobile Responsive
  */
 @media (max-width: 768px) {
@@ -303,10 +495,6 @@ const filterClass = 'form-select form-select-sm';
 
   .filter-container {
     padding: 0 0.75rem;
-  }
-
-  .filter-header h5 {
-    font-size: 0.95rem;
   }
 
   .form-select-sm,

@@ -15,7 +15,7 @@
  * 3. User klickt Job: Timeline laden (lazy loading)
  */
 
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
 import { useData } from '@/composables/useData.js';
@@ -25,6 +25,14 @@ import SkeletonCard from '@/components/SkeletonCard.vue';
 
 const router = useRouter();
 const { user, logout } = useAuth();
+
+/**
+ * ============================================
+ * Filter Panel State
+ * ============================================
+ */
+const showFilters = ref(true); // Toggle Filter-Panel Sichtbarkeit
+
 const {
   companies,
   jobs,
@@ -38,6 +46,7 @@ const {
   jobStatuses,
   communicationStatuses,
   communicationTypes,
+  allJobsForFilter,
   currentCompany,
   filteredCompanies,
   currentJobs,
@@ -138,37 +147,53 @@ const handleLogout = () => {
             <h1 class="h4 mb-0">📋 JobSearch</h1>
             <span v-if="user" class="text-muted">👤 {{ user.username }}</span>
           </div>
-          <button
-            @click="handleLogout"
-            class="btn btn-outline-danger btn-sm"
-          >
-            🚪 Logout
-          </button>
+          <div class="d-flex align-items-center gap-2">
+            <!-- Filter Toggle Button -->
+            <button
+              @click="showFilters = !showFilters"
+              class="btn btn-outline-secondary btn-sm"
+              :title="showFilters ? 'Filter ausblenden' : 'Filter anzeigen'"
+            >
+              {{ showFilters ? '🔽' : '▶️' }} Filter
+            </button>
+            <!-- Logout Button -->
+            <button
+              @click="handleLogout"
+              class="btn btn-outline-danger btn-sm"
+            >
+              🚪 Logout
+            </button>
+          </div>
         </div>
       </div>
     </header>
 
     <!-- ============================================ -->
-    <!-- FILTER SECTION (Sticky unter Header) -->
+    <!-- FILTER SECTION (Sticky unter Header, nicht scrollbar) -->
     <!-- ============================================ -->
-    <FilterBar
-      :filters="filters"
-      :companies="companies"
-      :jobs="currentJobs"
-      :current-company="currentCompany"
-      :job-statuses="jobStatuses"
-      :communication-statuses="communicationStatuses"
-      :communication-types="communicationTypes"
-      :available-people="availablePeople"
-      @update:companyId="handleCompanyChange"
-      @update:jobId="handleJobChange"
-      @update:jobStatus="handleJobStatusChange"
-      @update:person="setPersonFilter"
-      @update:communicationType="setCommunicationTypeFilter"
-      @update:communicationStatus="setCommunicationStatusFilter"
-      @update:fromDate="setFromDateFilter"
-      @reset="handleReset"
-    />
+    <div class="filter-section sticky-top" v-if="showFilters">
+      <div class="container-fluid">
+        <FilterBar
+          :filters="filters"
+          :companies="companies"
+          :jobs="currentJobs"
+          :current-company="currentCompany"
+          :all-jobs-for-filter="allJobsForFilter"
+          :job-statuses="jobStatuses"
+          :communication-statuses="communicationStatuses"
+          :communication-types="communicationTypes"
+          :available-people="availablePeople"
+          @update:companyId="handleCompanyChange"
+          @update:jobId="handleJobChange"
+          @update:jobStatus="handleJobStatusChange"
+          @update:person="setPersonFilter"
+          @update:communicationType="setCommunicationTypeFilter"
+          @update:communicationStatus="setCommunicationStatusFilter"
+          @update:fromDate="setFromDateFilter"
+          @reset="handleReset"
+        />
+      </div>
+    </div>
 
     <!-- ============================================ -->
     <!-- MAIN CONTENT (Scrollbar) -->
@@ -195,10 +220,13 @@ const handleLogout = () => {
           <HierarchicalDataTree
             :companies="filteredCompanies"
             :jobs-map="jobs"
+            :all-jobs-for-filter="allJobsForFilter"
             :timelines-map="timelines"
             :loading-jobs-map="loadingJobs"
             :loading-timeline-map="loadingTimeline"
+            :filters="filters"
             :communication-statuses="communicationStatuses"
+            :job-statuses="jobStatuses"
             @load-jobs="handleLoadJobs"
             @load-timeline="handleLoadTimeline"
             @next-page="(jobId) => loadTimelineForJob(jobId, (timelines[jobId]?.currentPage || 0) + 1)"
@@ -238,6 +266,21 @@ const handleLogout = () => {
 
 .header-content {
   padding: 0.5rem 0;
+}
+
+/**
+ * Filter Section (nicht scrollend, aber kollapsibel)
+ */
+.filter-section {
+  background: #ffffff;
+  border-bottom: 1px solid #e9ecef;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  z-index: 99;
+  padding: 1rem 0;
+}
+
+.filter-section .container-fluid {
+  padding: 0 1rem;
 }
 
 /**

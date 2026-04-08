@@ -61,6 +61,9 @@ const communicationTypes = [
   'WEBFORM',
 ];
 
+// Jobs für Filter-Dropdown (alle Jobs mit notwendigen Infos)
+const allJobsForFilter = ref([]);
+
 /**
  * ============================================
  * Exported Data
@@ -213,26 +216,34 @@ export const loadAddressForJob = async (job) => {
  */
 export const loadEnums = async () => {
   try {
-    // Communication-Status vom Backend holen
+    // Communication-Status vom Backend holen (nur für Communication Timeline)
     const statusResponse = await communicationApi.getStatuses();
     communicationStatuses.value = statusResponse.data;
+    console.log('[useData] ✅ Communication-Status geladen');
 
-    // Job-Status - bisher hardcoded, könnte auch vom Backend kommen
-    // TODO: Falls Backend einen Endpoint hat, hier nutzen
-    jobStatuses.value = [
-      'OFFEN',
-      'BEWORBEN',
-      'INFORMATION_ERHALTEN',
-      'ZUSAGE',
-      'ABSAGE',
-      // ... weitere aus Backend
-    ];
+    // Job-Status vom Backend holen (neuer Endpoint für Job Status Auswahl)
+    const jobStatusResponse = await jobApi.getStatuses();
+    jobStatuses.value = jobStatusResponse.data;
+    console.log('[useData] ✅ Job-Status geladen');
+
+    // ALLE Jobs für Filter-Dropdown laden (ohne Filter) - WICHTIG VOR COMPANIES!
+    console.log('[useData] 📡 API-Call: GET /jobs/for-filter startet...');
+    const allJobsResponse = await jobApi.getAllForFilter();
+    allJobsForFilter.value = allJobsResponse.data;
+    console.log('[useData] ✅ getAllForFilter() erfolgreich:', {
+      count: allJobsForFilter.value.length,
+      firstJob: allJobsForFilter.value[0],
+      sample: allJobsForFilter.value.slice(0,2).map(j => ({ id: j.id, text: j.text, companyId: j.companyId }))
+    });
   } catch (err) {
-    // Fallback: Nutze Mock Data für Enums
-    console.warn('⚠️ API fehler beim Laden der Enums, nutze Mock-Daten:', err.message);
-    const mockEnums = generateMockEnums();
-    communicationStatuses.value = mockEnums.communicationStatuses;
-    jobStatuses.value = mockEnums.jobStatuses.map(s => s.id);
+    console.error('[useData] ❌ API-Fehler beim Laden von allJobsForFilter:', {
+      message: err.message,
+      status: err.response?.status,
+      url: err.config?.url
+    });
+    
+    // Kein Fallback auf Mock-Daten - echte Fehler sollten sichtbar sein
+    allJobsForFilter.value = [];
   }
 };
 
@@ -405,6 +416,7 @@ export function useData() {
     jobStatuses,
     communicationStatuses,
     communicationTypes,
+    allJobsForFilter,
 
     // Computed
     currentCompany,
