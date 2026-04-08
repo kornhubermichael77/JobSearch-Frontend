@@ -112,6 +112,58 @@ const getDecimalSeparator = () => {
 const decimalSeparator = getDecimalSeparator();
 
 /**
+ * ⚠️ WICHTIG: Reagiere auf props.address Änderungen (z.B. nach API-Load oder Login)
+ */
+watch(
+  () => props.address,
+  (newAddress) => {
+    // Immer aufrufen wenn Address vorhanden ist (außer wir sind gerade beim Editieren)
+    if (newAddress) {
+      if (isEditMode.value) {
+        return;
+      }
+      
+      // Verarbeite Traveltime: nur HH:MM speichern
+      let traveltime = newAddress.traveltime;
+      if (traveltime && traveltime.includes('T')) {
+        const timePart = traveltime.split('T')[1];
+        traveltime = timePart.substring(0, 5);
+      } else if (traveltime && traveltime.includes(':')) {
+        traveltime = traveltime.substring(0, 5);
+      }
+      
+      // Verarbeite Distance: zu Number mit 2 Decimals
+      let distance = newAddress.distance;
+      if (distance != null) {
+        let distanceStr = String(distance).replace(',', '.');
+        distance = parseFloat(distanceStr);
+        distance = parseFloat(distance.toFixed(2));
+      }
+      
+      // ✅ Fülle originalData mit VERARBEITETEN Werten für die Anzeige
+      originalData.value = {
+        ...newAddress,
+        traveltime: traveltime || null,
+        distance: distance ?? null,
+      };
+      
+      // ✅ Aktualisiere auch formData falls wir später editieren
+      Object.assign(formData, {
+        street: newAddress.street || '',
+        number: newAddress.number || '',
+        postcode: newAddress.postcode || '',
+        city: newAddress.city || '',
+        country: newAddress.country || '',
+        traveltime: traveltime || '00:00',
+        headquarter: newAddress.headquarter ?? true,
+        distance: distance ?? 0.00,
+      });
+    }
+  },
+  { immediate: true, deep: true }
+);
+
+/**
  * Bearbeitungsmodus aktivieren (Edit) oder Erstellungsmodus starten (Create)
  */
 const startEdit = async () => {
@@ -123,19 +175,29 @@ const startEdit = async () => {
     originalData.value = JSON.parse(JSON.stringify(props.address));
     Object.assign(formData, props.address);
     
-    // Traveltime: Extrahiere nur "HH:MM" aus "1970-01-01T HH:MM:00" ISO format
-    if (formData.traveltime && formData.traveltime.includes('T')) {
-      // Format: 1970-01-01T01:30:00 → 01:30
-      formData.traveltime = formData.traveltime.split('T')[1].substring(0, 5);
+    // Traveltime: Extrahiere nur "HH:MM" aus "1970-01-01T HH:MM:00" oder "HH:MM:SS" ISO format
+    if (formData.traveltime) {
+      if (formData.traveltime.includes('T')) {
+        // Format: 1970-01-01T01:30:00 → 01:30
+        const timePart = formData.traveltime.split('T')[1];
+        formData.traveltime = timePart.substring(0, 5); // HH:MM
+      } else if (formData.traveltime.includes(':')) {
+        // Falls schon nur HH:MM:SS oder HH:MM
+        formData.traveltime = formData.traveltime.substring(0, 5); // HH:MM
+      }
     }
     
     // Stelle sicher dass distance ein Number ist mit 2 decimals
     // Konvertiere Komma zu Punkt (für Locales die Komma verwenden)
-    let distanceStr = formData.distance.toString().replace(',', '.');
-    if (typeof distanceStr === 'string') {
-      formData.distance = parseFloat(distanceStr);
+    if (formData.distance != null) {
+      let distanceStr = formData.distance.toString().replace(',', '.');
+      if (typeof distanceStr === 'string') {
+        formData.distance = parseFloat(distanceStr);
+      }
+      formData.distance = parseFloat(formData.distance.toFixed(2));
+    } else {
+      formData.distance = 0.00;
     }
-    formData.distance = parseFloat(formData.distance.toFixed(2));
   } else {
     // ✅ CREATE MODE: Leere Felder mit Defaults
     originalData.value = {};
@@ -202,13 +264,15 @@ const saveChanges = async () => {
     // Validiere Distance: 0-999.99 mit 2 Dezimalstellen
     // Konvertiere Komma zu Punkt (für Locales die Komma verwenden)
     let distance = null;
-    if (formData.distance && formData.distance !== 0) {
-      let distanceStr = formData.distance.toString().replace(',', '.');
+    if (formData.distance != null && formData.distance !== 0) {
+      let distanceStr = String(formData.distance).replace(',', '.');
       distance = parseFloat(distanceStr);
       if (isNaN(distance) || distance < 0 || distance > 999.99) {
         throw new Error('Distance muss zwischen 0 und 999.99 liegen!');
       }
       distance = parseFloat(distance.toFixed(2));
+    } else if (formData.distance === 0 || formData.distance === '0' || formData.distance === '0.00') {
+      distance = 0.00;
     }
     
     // Baue Payload mit nur nicht-leeren Feldern
@@ -242,6 +306,12 @@ const saveChanges = async () => {
     // Distance: null oder Zahl mit 2 Dezimalstellen
     payload.distance = distance;
     
+    // ⚠️ WICHTIG: Bei JOB-Address CREATE muss jobId mitgesendet werden
+    // Backend nutzt jobId um companyId zu ermitteln und zu speichern
+    if (props.mode === 'create' && props.parentType === 'job') {
+      payload.jobId = props.parentId;
+    }
+    
     let response;
     if (props.mode === 'create') {
       // ✨ CREATE: Neue Adresse erstellen
@@ -249,42 +319,27 @@ const saveChanges = async () => {
         // Company-Adresse: POST /api/companies/{parentId}/addresses
         response = await addressApi.createForCompany(props.parentId, payload);
       } else if (props.parentType === 'job') {
-        // Job-Adresse: 
-        // 1. POST /api/addresses (standalone)
-        const addressResponse = await addressApi.create(payload);
-        const newAddressId = addressResponse.data.id;
-        
-        // 2. PATCH /api/jobs/{jobId}/addressId - nur diese Feld updaten
-        await jobApi.updateAddressId(props.parentId, newAddressId);
-        
-        // 3. Response kombinieren: Address + Job-Update Info
-        response = {
-          data: {
-            ...addressResponse.data,
-            _jobUpdated: true // Flag dass Job auch aktualisiert wurde
-          }
-        };
+        // Job-Adresse: POST /api/addresses mit jobId + Backend-Logik
+        // Backend wird: 
+        // 1. companyId vom Job ermitteln
+        // 2. In die neue Adresse speichern
+        // 3. Address-ID im Job speichern (via FK)
+        // 4. Komplettes Address-Objekt mit companyId zurückliefern
+        response = await addressApi.create(payload);
       }
     } else {
       // EDIT: PUT /api/addresses/{id}
-      if (props.parentType === 'company') {
-        response = await addressApi.update(props.address.id, payload);
-      } else if (props.parentType === 'job') {
-        // Job-Adressen: noch keine API, also nur lokal updaten
-        response = {
-          data: {
-            id: props.parentId, // Nutze Job-ID als Address-ID (temporary)
-            ...payload
-          }
-        };
-      }
+      response = await addressApi.update(props.address.id, payload);
     }
-    
-    // Emit update Event mit neuen Daten
-    emit('update', response.data);
     
     // Update interne Daten
     originalData.value = JSON.parse(JSON.stringify(response.data));
+    
+    // Synchronisiere formData mit neuen Daten (für die Anzeige)
+    Object.assign(formData, response.data);
+    
+    // Emit update Event mit neuen Daten
+    emit('update', response.data);
     
     // Mode beenden
     isEditMode.value = false;
@@ -355,28 +410,33 @@ const cancelDelete = () => {
 };
 
 /**
- * Formatiere Adresse zur Anzeige
+ * Formatiere Adresse zur Anzeige (nutze originalData nach Save)
  */
 const formatAddress = () => {
-  if (!props.address) return '';
-  const addr = props.address;
+  const addr = Object.keys(originalData.value).length > 0 ? originalData.value : props.address;
+  if (!addr) return '';
   const parts = [addr.street];
   if (addr.number) parts.push(addr.number);
-  parts.push(addr.postcode + ' ' + addr.city);
+  parts.push((addr.postcode || '') + ' ' + (addr.city || ''));
   if (addr.country) parts.push(addr.country);
   return parts.join(', ');
 };
 
 /**
- * Traveltime formatieren für die Anzeige (nur HH:MM aus ISO-Format)
+ * Traveltime formatieren für die Anzeige (nur HH:MM aus ISO-Format oder direkter Angabe)
  */
 const formatTraveltime = (time) => {
   if (!time) return '—';
-  // Format: "1970-01-01T01:30:00" → "01:30"
+  
+  // Format: "1970-01-01T01:30:00" oder "01:30:00" → "01:30"
   if (time.includes('T')) {
-    return time.split('T')[1].substring(0, 5);
+    const timePart = time.split('T')[1];
+    return timePart.substring(0, 5); // HH:MM
+  } else if (time.includes(':')) {
+    // Falls schon nur HH:MM:SS oder HH:MM
+    return time.substring(0, 5); // HH:MM
   }
-  // Falls schon nur HH:MM
+  
   return time;
 };
 
@@ -384,6 +444,8 @@ const formatTraveltime = (time) => {
  * Distance formatieren mit 2 Dezimalstellen und lokalem Dezimaltrennzeichen
  */
 const formatDistance = (dist) => {
+  if (dist == null) return '—';
+  
   if (typeof dist === 'number') {
     const formatted = dist.toFixed(2);
     // Ersetze Punkt durch Locale-spezifisches Trennzeichen
@@ -392,12 +454,16 @@ const formatDistance = (dist) => {
     }
     return formatted;
   }
-  const parsed = parseFloat(dist).toFixed(2);
+  
+  const parsed = parseFloat(dist);
+  if (isNaN(parsed)) return '—';
+  
+  const formatted = parsed.toFixed(2);
   // Ersetze Punkt durch Locale-spezifisches Trennzeichen
   if (decimalSeparator !== '.') {
-    return parsed.replace('.', decimalSeparator);
+    return formatted.replace('.', decimalSeparator);
   }
-  return parsed;
+  return formatted;
 };
 </script>
 
@@ -421,8 +487,8 @@ const formatDistance = (dist) => {
           <span class="address-text">{{ formatAddress() }}</span>
         </div>
 
-        <!-- Action Buttons (collapsed view) -->
-        <div class="address-actions" @click.stop v-if="props.address">
+        <!-- Action Buttons (nur im expanded view) -->
+        <div class="address-actions" @click.stop v-if="isExpanded && props.address">
           <button
             class="btn btn-sm btn-secondary"
             @click="startEdit"
@@ -474,11 +540,12 @@ const formatDistance = (dist) => {
 
     <!-- Detailed View (expanded) -->
     <div class="address-details" v-if="isExpanded && !isEditMode">
+      <!-- Nutze originalData für Anzeige (wird nach Save aktualisiert) -->
       <!-- Straße + Hausnummer (kombiniert) -->
       <div class="form-row-combined">
         <label class="form-label-combined">Straße, Nr.</label>
         <span class="detail-value">
-          {{ [props.address?.street, props.address?.number].filter(Boolean).join(' ') || '—' }}
+          {{ [(originalData.street || props.address?.street), (originalData.number || props.address?.number)].filter(Boolean).join(' ') || '—' }}
         </span>
       </div>
 
@@ -486,29 +553,29 @@ const formatDistance = (dist) => {
       <div class="form-row-combined">
         <label class="form-label-combined">PLZ, Stadt</label>
         <span class="detail-value">
-          {{ [props.address?.postcode, props.address?.city].filter(Boolean).join(' ') || '—' }}
+          {{ [(originalData.postcode || props.address?.postcode), (originalData.city || props.address?.city)].filter(Boolean).join(' ') || '—' }}
         </span>
       </div>
 
       <!-- Land -->
       <div class="form-row-combined form-row-country">
         <label class="form-label-combined">Land</label>
-        <span class="detail-value">{{ props.address?.country || '—' }}</span>
+        <span class="detail-value">{{ originalData.country || props.address?.country || '—' }}</span>
       </div>
 
       <!-- Anfahrtszeit + Entfernung + Hauptsitz (nebeneinander) -->
       <div class="form-row-flex detail-view-flex">
         <div class="form-field-group">
           <label class="form-label-combined">Anfahrtszeit (HH:MM)</label>
-          <span class="detail-value">{{ formatTraveltime(props.address?.traveltime) }}</span>
+          <span class="detail-value">{{ formatTraveltime(originalData.traveltime || props.address?.traveltime) }}</span>
         </div>
         <div class="form-field-group">
           <label class="form-label-combined">Entfernung (km)</label>
-          <span class="detail-value">{{ formatDistance(props.address?.distance) || '—' }} km</span>
+          <span class="detail-value">{{ formatDistance(originalData.distance ?? props.address?.distance) || '—' }} km</span>
         </div>
         <div class="form-field-group">
           <label class="form-label-combined">Hauptsitz</label>
-          <span class="detail-value">{{ props.address?.headquarter ? '✔️ Ja' : '—' }}</span>
+          <span class="detail-value">{{ (originalData.headquarter !== undefined ? originalData.headquarter : props.address?.headquarter) ? '✔️ Ja' : '—' }}</span>
         </div>
       </div>
     </div>

@@ -21,6 +21,7 @@
 import { ref, computed } from 'vue';
 import TimelineItem from './TimelineItem.vue';
 import AddressItem from './AddressItem.vue';
+import JobItem from './JobItem.vue';
 import { addressApi, jobApi } from '@/services/api.js';
 import { loadAddressForJob } from '@/composables/useData.js';
 
@@ -79,6 +80,17 @@ const creatingAddressForCompanyId = ref(null);
  * State für Create-Mode einer neuen Adresse (bei Job)
  */
 const creatingAddressForJobId = ref(null);
+
+/**
+ * State für Address-Dropdown (zeige/verstecke Liste von Firmenadressen)
+ * Schlüssel: jobId, Value: true/false
+ */
+const addressDropdownOpen = ref({});
+
+/**
+ * State für Create-Mode eines neuen Jobs (bei Company)
+ */
+const creatingJobForCompanyId = ref(null);
 
 /**
  * Verfügbare Kommunikationstypen
@@ -221,6 +233,68 @@ const cancelCreateJobAddress = () => {
 };
 
 /**
+ * Weise eine bestehende Address einem Job zu
+ * 
+ * Logik:
+ * 1. PATCH /api/jobs/{jobId}/addressId { addressId: selectedAddress.id }
+ * 2. Update Job-Felder mit Address-Daten
+ * 3. Schließe Dropdown
+ */
+const assignAddressToJob = async (job, address) => {
+  if (!address || !address.id) {
+    console.warn('⚠️ Keine Address ausgewählt');
+    return;
+  }
+  
+  try {
+    console.log(`⚙️ PATCH Job ${job.id}: addressId → ${address.id}`);
+    
+    // PATCH den Job um addressId zu setzen
+    await jobApi.updateAddressId(job.id, address.id);
+    
+    // Update Job-Objekt mit Address-Daten
+    job.addressId = address.id;
+    job.street = address.street || null;
+    job.number = address.number || null;
+    job.postcode = address.postcode || null;
+    job.city = address.city || null;
+    job.country = address.country || null;
+    job.traveltime = address.traveltime || null;
+    job.distance = address.distance || null;
+    job.headquarter = address.headquarter ?? false;
+    
+    console.log(`✅ Job ${job.id} erhielt Address ${address.id}`);
+    
+    // Schließe Dropdown
+    addressDropdownOpen.value[job.id] = false;
+  } catch (err) {
+    console.error('❌ Fehler beim Zuweisen der Adresse:', err);
+    alert('Fehler beim Zuweisen der Adresse: ' + (err.response?.data?.message || err.message));
+  }
+};
+
+/**
+ * Toggle Address-Dropdown für einen Job
+ */
+const toggleAddressDropdown = (jobId) => {
+  addressDropdownOpen.value[jobId] = !addressDropdownOpen.value[jobId];
+};
+
+/**
+ * Helper: Formatiere Address zur Anzeige in Dropdown
+ * Format: "Straße, Nummer, PLZ Stadt"
+ */
+const formatAddressForDropdown = (address) => {
+  const parts = [];
+  if (address.street) parts.push(address.street);
+  if (address.number) parts[0] = `${parts[0]}, ${address.number}`;
+  if (address.postcode || address.city) {
+    parts.push(`${address.postcode || ''} ${address.city || ''}`.trim());
+  }
+  return parts.join(' ') || 'Adresse ohne Daten';
+};
+
+/**
  * Address Update Handler (for Companies)
  */
 const handleAddressUpdate = (company, updatedAddress) => {
@@ -238,18 +312,24 @@ const handleAddressUpdate = (company, updatedAddress) => {
 /**
  * Job Address Update Handler
  * When a job address is created or updated
+ * 
+ * Logik bei CREATE:
+ * - Backend liefert Address mit companyId zurück
+ * - Frontend fügt diese Address zu company.addresses hinzu (collapsed)
+ * - Spart Reload und Datentrafik
  */
 const handleJobAddressUpdate = (job, updatedAddress) => {
   if (!updatedAddress) return;
   
+  // 🚨 WICHTIG: Speichernen ob wir in CREATE-Mode waren BEVOR wir cancelCreate aufrufen!
+  const wasCreating = creatingAddressForJobId.value === job.id;
+  
   // 1. Wenn Create-Mode war: Close the form
-  if (creatingAddressForJobId.value === job.id) {
+  if (wasCreating) {
     cancelCreateJobAddress();
   }
   
-  // 2. Update Job mit neue addressId (kommt vom Backend nach Create)
-  // Die Address selbst wurde bereits vom Backend erstellt
-  // Das Backend gibt die address_id zurück, die der Job referenzieren sollte
+  // 2. Update Job mit neue addressId
   if (updatedAddress.id) {
     job.addressId = updatedAddress.id;
   }
@@ -259,6 +339,34 @@ const handleJobAddressUpdate = (job, updatedAddress) => {
   job.number = updatedAddress.number || null;
   job.postcode = updatedAddress.postcode || null;
   job.city = updatedAddress.city || null;
+  job.country = updatedAddress.country || null;
+  job.traveltime = updatedAddress.traveltime || null;
+  job.distance = updatedAddress.distance || null;
+  job.headquarter = updatedAddress.headquarter ?? false;
+  
+  // 4️⃣ NEU: Bei CREATE-Mode die neue Address zu Company-Adressen hinzufügen
+  // Das Backend liefert die companyId in der Address zurück (nur beim CREATE)
+  if (updatedAddress.companyId && wasCreating) {
+    console.log('🎯 Neue Address für Company erstellt, füge zu company.addresses hinzu');
+    
+    // Finde die Company mit dieser companyId
+    const company = props.companies?.find(c => c.id === updatedAddress.companyId);
+    if (company) {
+      // Stelle sicher dass company.addresses existiert
+      if (!company.addresses) {
+        company.addresses = [];
+      }
+      
+      // Füge die neue Address hinzu (falls nicht bereits vorhanden)
+      const alreadyExists = company.addresses.some(a => a.id === updatedAddress.id);
+      if (!alreadyExists) {
+        console.log(`✅ Address ${updatedAddress.id} zu Company ${company.id} hinzugefügt`);
+        company.addresses.push(updatedAddress);
+      }
+    } else {
+      console.warn(`⚠️ Company mit ID ${updatedAddress.companyId} nicht gefunden`);
+    }
+  }
   
   console.log('✅ Job-Adresse aktualisiert:', job);
 };
@@ -266,17 +374,65 @@ const handleJobAddressUpdate = (job, updatedAddress) => {
 /**
  * Address Delete Handler (Companies)
  */
+/**
+ * Address Delete Handler (Company-Adressen)
+ * Muss betroffene Jobs finden & ihre FK auf null setzen BEVOR Adresse gelöscht wird
+ * 
+ * Logik:
+ * 1. Durchsuche alle Jobs der Firma nach addressId === zu_löschende_id
+ * 2. Für jeden betroffenen Job: PATCH /api/jobs/{id}/addressId { addressId: null }
+ * 3. Update Job-Objekte im jobsMap (addressId nullen + Adressfelder)
+ * 4. DELETE /api/addresses/{id}
+ * 5. Entferne Adresse aus company.addresses
+ */
 const handleAddressDelete = async (company, addressId) => {
   try {
-    // 1. API-Call: DELETE /api/addresses/{id}
+    console.log(`🔍 Suche betroffene Jobs für addressId=${addressId} in companyId=${company.id}`);
+    
+    // 1️⃣ Finde alle Jobs dieser Firma die diese addressId haben
+    const affectedJobs = [];
+    if (props.jobsMap && props.jobsMap[company.id]) {
+      affectedJobs.push(
+        ...props.jobsMap[company.id].filter(job => job.addressId === addressId)
+      );
+    }
+    
+    console.log(`📋 Gefundene Jobs mit addressId ${addressId}:`, affectedJobs.length);
+    
+    // 2️⃣ Für jeden betroffenen Job: PATCH addressId auf null
+    for (const job of affectedJobs) {
+      try {
+        console.log(`⚙️ PATCH Job ${job.id}: addressId → null`);
+        await jobApi.updateAddressId(job.id, null);
+        
+        // 3️⃣ Update Job-Objekt im jobsMap
+        job.addressId = null;
+        job.street = null;
+        job.number = null;
+        job.postcode = null;
+        job.city = null;
+        job.country = null;
+        job.traveltime = null;
+        job.distance = null;
+        job.headquarter = false;
+        
+        console.log(`✅ Job ${job.id} aktualisiert`);
+      } catch (err) {
+        console.error(`❌ Fehler beim Patchen von Job ${job.id}:`, err);
+        throw new Error(`Job ${job.id} konnte nicht aktualisiert werden: ${err.message}`);
+      }
+    }
+    
+    // 4️⃣ DELETE Adresse selbst
+    console.log(`🗑️ DELETE /api/addresses/${addressId}`);
     await addressApi.delete(addressId);
     
-    // 2. UI aktualisieren: Adresse aus Array entfernen
+    // 5️⃣ UI aktualisieren: Adresse aus Array entfernen
     if (company.addresses) {
       const index = company.addresses.findIndex(a => a.id === addressId);
       if (index !== -1) {
         company.addresses.splice(index, 1);
-        console.log('✅ Adresse gelöscht:', addressId);
+        console.log(`✅ Adresse ${addressId} gelöscht. ${affectedJobs.length} Jobs aktualisiert.`);
       }
     }
   } catch (err) {
@@ -293,32 +449,116 @@ const handleAddressDelete = async (company, addressId) => {
  */
 const handleJobAddressDelete = async (job) => {
   try {
-    const addressIdToDelete = job.addressId;
-    
     // 1. Job aktualisieren: addressId auf null setzen (via PATCH - nur dieses Feld)
+    // ⚠️ WICHTIG: Adresse wird NICHT gelöscht! Sie bleibt in company.addresses
+    // Das ist ein "Soft-Delete" für den Job - nur die FK wird nullifiziert
     await jobApi.updateAddressId(job.id, null);
-    console.log('✅ Job.addressId auf null gesetzt');
+    console.log('✅ Job.addressId auf null gesetzt (Adresse bleibt in Company)');
     
-    // 2. Jetzt die Adresse selbst löschen (FK-Constraint ist erfüllt)
-    if (addressIdToDelete) {
-      await addressApi.delete(addressIdToDelete);
-      console.log('✅ Adresse gelöscht:', addressIdToDelete);
-    }
-    
-    // 3. UI aktualisieren: Job-Adressfelder zurücksetzen
+    // 2. UI aktualisieren: Job-Adressfelder zurücksetzen
     job.street = null;
     job.number = null;
     job.postcode = null;
     job.city = null;
+    job.country = null;
+    job.traveltime = null;
+    job.distance = null;
+    job.headquarter = false;
     job.addressId = null;
     
-    console.log('✅ Job-Adresse komplett entfernt:', job.id);
+    console.log('✅ Job-Adresse vom Job getrennt (Adresse bleibt bei Company):', job.id);
   } catch (err) {
-    console.error('❌ Fehler beim Löschen der Job-Adresse:', err);
-    alert('Fehler beim Löschen der Adresse: ' + (err.response?.data?.message || err.message));
+    console.error('❌ Fehler beim Trennen der Job-Adresse:', err);
+    alert('Fehler beim Trennen der Adresse: ' + (err.response?.data?.message || err.message));
   }
 };
 
+/**
+ * ============================================
+ * JOB Handlers (Create/Update/Delete)
+ * ============================================
+ */
+
+/**
+ * Starte Create-Mode für neuen Job
+ */
+const startCreateJob = (companyId) => {
+  creatingJobForCompanyId.value = companyId;
+};
+
+/**
+ * Abbreche Create-Mode für neuen Job
+ */
+const cancelCreateJob = () => {
+  creatingJobForCompanyId.value = null;
+};
+
+/**
+ * Handle Job Created/Updated
+ * Nach erfolgreichem POST oder PUT wird dieser Handler aufgerufen
+ */
+const handleJobUpdate = (job) => {
+  // Der Job wurde vom Backend zurückgegeben
+  // Wir müssen ihn in unsere lokale jobsMap integrieren
+  
+  if (!job?.id) {
+    console.error('❌ Job ohne ID erhalten:', job);
+    return;
+  }
+
+  const jobsForCompany = props.jobsMap[job.companyId];
+  if (!jobsForCompany) {
+    console.error('❌ Keine Jobs für Company:', job.companyId);
+    return;
+  }
+
+  // Prüfe ob Job bereits existiert (Update) oder neu (Create)
+  const existingIndex = jobsForCompany.findIndex(j => j.id === job.id);
+  
+  if (existingIndex !== -1) {
+    // UPDATE: Ersetze bestehenden Job
+    jobsForCompany[existingIndex] = job;
+    console.log('✅ Job aktualisiert:', job.id);
+  } else {
+    // CREATE: Füge neuen Job am Anfang hinzu
+    jobsForCompany.unshift(job);
+    console.log('✅ Neuer Job erstellt:', job.id);
+  }
+
+  // Create-Mode beenden
+  cancelCreateJob();
+};
+
+/**
+ * Handle Job Deleted
+ * Nach erfolgreichem DELETE wird dieser Handler aufgerufen
+ * Das Backend löscht automatisch alle zugehörigen Timeline-Einträge (cascading)
+ */
+const handleJobDelete = async (jobId, companyId) => {
+  try {
+    // DELETE /api/jobs/{jobId}
+    // Das Backend kümmert sich um Cascade-Löschen der Timelines
+    await jobApi.delete(jobId);
+
+    // UI aktualisieren: Job aus der Liste entfernen
+    const jobsForCompany = props.jobsMap[companyId];
+    if (jobsForCompany) {
+      const index = jobsForCompany.findIndex(j => j.id === jobId);
+      if (index !== -1) {
+        jobsForCompany.splice(index, 1);
+        console.log('✅ Job gelöscht:', jobId);
+      }
+    }
+
+    // Cleanup: Wenn Timeline geladen war, entfernen
+    if (props.timelinesMap && props.timelinesMap[jobId]) {
+      delete props.timelinesMap[jobId];
+    }
+  } catch (err) {
+    console.error('❌ Fehler beim Löschen des Jobs:', err);
+    alert('Fehler beim Löschen des Jobs: ' + (err.response?.data?.message || err.message));
+  }
+};
 
 /**
  * Computed: ist Company expandiert?
@@ -490,6 +730,12 @@ const isTimelineLoading = (jobId) => {
         <!-- COMPANY CONTENT (expandiert) -->
         <div v-if="isCompanyExpanded(company.id)" class="company-content">
           <div class="jobs-section">
+            <!-- ============================================
+                 JOBS (Level 2) 
+                 Renderiert mit JobItem Komponente
+                 ============================================ -->
+
+            <!-- Empty State wenn keine Jobs -->
             <div
               v-if="!getJobsForCompany(company.id).length"
               class="text-muted text-center py-2"
@@ -497,79 +743,48 @@ const isTimelineLoading = (jobId) => {
               <em>Keine Jobs vorhanden</em>
             </div>
 
+            <!-- Jobs Loop: Rendere jeden Job mit JobItem -->
             <div
               v-for="job in getJobsForCompany(company.id)"
-              :key="job.id"
-              class="job-item"
+              :key="`job-${job.id}`"
+              class="job-wrapper"
             >
-              <!-- JOB HEADER -->
-              <div class="job-header" :class="{ expanded: isJobExpanded(job.id) }">
-                <!-- LEFT: Toggle Button + Actions (vertikal) -->
-                <div class="job-header-left">
-                  <button
-                    class="toggle-btn"
-                    :aria-expanded="isJobExpanded(job.id)"
-                    @click="toggleJob(job.id)"
-                  >
-                    {{ isJobExpanded(job.id) ? '▼' : '▶' }}
-                  </button>
+              <!-- 
+                JobItem Komponente: 
+                - Rendert Job in View/Edit/Create Mode
+                - Zeigt alle Job-Details wenn expanded
+                - Ermöglicht Edit direkt im Komponente
+              -->
+              <JobItem
+                :job="job"
+                :company-id="company.id"
+                :is-expanded="isJobExpanded(job.id)"
+                :mode="'view'"
+                :communication-statuses="props.communicationStatuses"
+                @toggle="toggleJob(job.id)"
+                @update="handleJobUpdate($event)"
+                @delete="handleJobDelete($event, company.id)"
+              />
 
-                  <!-- Action Buttons (vertikal angeordnet) - nur wenn expanded -->
-                  <div v-if="isJobExpanded(job.id)" class="job-actions">
-                    <button class="btn btn-sm btn-outline-primary" title="Bearbeiten">
-                      ✏️
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger" title="Löschen">
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-
-                <!-- MIDDLE: Job Info Header (Title, Features, Meta) -->
-                <div class="job-header-center">
-                  <!-- Zeile 1: Erste Zeile von Text (links) and Status (rechts in Klammern) -->
-                  <div class="job-title-row">
-                    <h5 class="job-title">{{ job.text?.split('\n')[0]?.substring(0, 50) || job.source }}</h5>
-                    <span class="job-status">({{ job.status }})</span>
-                  </div>
-
-                  <!-- Zeile 2: Features -->
-                  <h6 v-if="job.features" class="job-features">{{ job.features }}</h6>
-
-                  <!-- Zeile 3: Meta (Datum, Link, Kommunikationen) + Badge -->
-                  <p class="job-meta">
-                    <span class="job-meta-source">Quelle: {{ job.source }}</span>
-                    <span v-if="job.found" class="small">
-                      📅 {{ new Date(job.found).toLocaleDateString('de-DE') }}
-                    </span>
-                    <span v-if="job.url" class="small ms-2">
-                      <a :href="job.url" target="_blank">Link</a>
-                    </span>
-                    <span v-if="job.communicationCount" class="job-meta-badge">
-                      <span class="badge bg-light text-dark">
-                        {{ job.communicationCount }} 💬
-                      </span>
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-              <!-- JOB ADDRESS (View Mode - wenn vorhanden) -->
+              <!-- 
+                Job Address: Wird NACH dem Job gerendert
+                Zeigt die Adresse des Jobs an (falls vorhanden)
+              -->
               <AddressItem
-                v-if="(job.city || job.street || job.postcode) && creatingAddressForJobId !== job.id"
+                v-if="job.addressId || job.city || job.street || job.postcode"
                 :address="{
-                  id: job.id,
+                  id: job.addressId,
                   street: job.street || null,
                   number: job.number || null,
                   postcode: job.postcode || null,
                   city: job.city || null,
-                  country: null,
-                  traveltime: null,
-                  distance: null,
-                  headquarter: false
+                  country: job.country || null,
+                  traveltime: job.traveltime || null,
+                  distance: job.distance || null,
+                  headquarter: job.headquarter ?? false
                 }"
                 :parent-type="'job'"
-                :parent-id="job.id"
+                :parent-id="job.addressId"
                 :is-expanded="isAddressExpanded(job.id)"
                 :mode="'view'"
                 @toggle="toggleAddress(job.id)"
@@ -577,7 +792,60 @@ const isTimelineLoading = (jobId) => {
                 @delete="handleJobAddressDelete(job)"
               />
 
-              <!-- JOB ADDRESS (Create Mode) -->
+              <!-- 
+                Button/Dropdown zum Adresse zuweisen oder neu erstellen
+                Nur sichtbar wenn:
+                - Kein addressId vorhanden (max 1 Adresse pro Job)
+                - Nicht gerade im Create-Mode für eine Adresse
+              -->
+              <div 
+                v-if="!job.addressId && creatingAddressForJobId !== job.id"
+                class="address-dropdown-container ms-2 mb-2"
+              >
+                <!-- Dropdown Button -->
+                <button
+                  class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                  @click="toggleAddressDropdown(job.id)"
+                  :aria-expanded="addressDropdownOpen[job.id] ? 'true' : 'false'"
+                >
+                  📍 Adresse hinzufügen
+                </button>
+
+                <!-- Dropdown Menu (mit Firmenadressen + Create-Option) -->
+                <div 
+                  v-if="addressDropdownOpen[job.id]"
+                  class="dropdown-menu show"
+                >
+                  <!-- Existierende Firmenadressen -->
+                  <div v-if="company.addresses?.length > 0" class="dropdown-menu-addresses">
+                    <small class="dropdown-header">Firmenadressen:</small>
+                    <button
+                      v-for="address in company.addresses"
+                      :key="address.id"
+                      type="button"
+                      class="dropdown-item"
+                      @click="assignAddressToJob(job, address)"
+                    >
+                      {{ formatAddressForDropdown(address) }}
+                    </button>
+                    <div class="dropdown-divider"></div>
+                  </div>
+
+                  <!-- Create New Address Option -->
+                  <button
+                    type="button"
+                    class="dropdown-item"
+                    @click="startCreateJobAddress(job.id); addressDropdownOpen[job.id] = false;"
+                  >
+                    ➕ Neue Adresse erstellen
+                  </button>
+                </div>
+              </div>
+
+              <!-- 
+                Job Address Create Form
+                Wird inline angezeigt wenn Benutzer "+ Adresse hinzufügen" klickt
+              -->
               <AddressItem
                 v-if="creatingAddressForJobId === job.id"
                 :address="{}"
@@ -586,203 +854,176 @@ const isTimelineLoading = (jobId) => {
                 :is-expanded="true"
                 :mode="'create'"
                 @update="handleJobAddressUpdate(job, $event); cancelCreateJobAddress();"
+                @delete="cancelCreateJobAddress()"
               />
 
-              <!-- Neue Adresse Button (nur wenn keine Adresse vorhanden und nicht im Create-Mode) -->
-              <button
-                v-if="!job.addressId && creatingAddressForJobId !== job.id"
-                class="btn btn-sm btn-outline-secondary"
-                @click="startCreateJobAddress(job.id)"
-              >
-                + Adresse hinzufügen
-              </button>
-
-              <!-- JOB CONTENT (expandiert - wächst inline) -->
-              <!-- Job-Details wachsen direkt in job-item, nicht separate Box -->
-              <div v-if="isJobExpanded(job.id)" class="job-details-collapsed-container">
-                <div class="job-expanded-section">
-                  <!-- Job Details Text -->
-                  <div v-if="job.text" class="job-text">
-                    <strong>Beschreibung:</strong> {{ job.text }}
-                  </div>
-
-                  <!-- Features -->
-                  <div v-if="job.features" class="job-text">
-                    <strong>Features:</strong> {{ job.features }}
-                  </div>
-
-                  <!-- Job Details - Kontakt & Extras -->
-                  <div class="job-details-grid">
-                    <!-- Kontakt Informationen -->
-                    <div v-if="job.mail || job.tel" class="job-details-section">
-                      <h6 class="section-title">📧 Kontakt</h6>
-                      <div v-if="job.mail || job.mailPerson" class="detail-line">
-                        <span class="label">E-Mail:</span>
-                        <span v-if="job.mail" class="value"><a :href="`mailto:${job.mail}`">{{ job.mail }}</a></span>
-                        <span v-if="job.mailPerson" class="value">{{ job.mailPerson }}</span>
-                      </div>
-                      <div v-if="job.tel || job.telPerson" class="detail-line">
-                        <span class="label">Telefon:</span>
-                        <span v-if="job.tel" class="value"><a :href="`tel:${job.tel}`">{{ job.tel }}</a></span>
-                        <span v-if="job.telPerson" class="value">{{ job.telPerson }}</span>
-                      </div>
-                    </div>
-
-                    <!-- Arbeitsplatz Details -->
-                    <div v-if="job.teilzeit || job.gleitzeit || job.homeoffice" class="job-details-section">
-                      <h6 class="section-title">⚙️ Arbeitsplatz</h6>
-                      <div v-if="job.teilzeit" class="detail-line">
-                        <span class="label">Teilzeit:</span>
-                        <span class="value">{{ job.teilzeit }}</span>
-                      </div>
-                      <div v-if="job.gleitzeit" class="detail-line">
-                        <span class="label">Gleitzeit:</span>
-                        <span class="value">{{ job.gleitzeit }}</span>
-                      </div>
-                      <div v-if="job.homeoffice" class="detail-line">
-                        <span class="label">Home Office:</span>
-                        <span class="value">{{ job.homeoffice }}</span>
-                      </div>
-                    </div>
-                  </div>
+              <!-- 
+                Timeline Container (Level 3)
+                Nur rendern wenn Job expanded ist
+              -->
+              <div v-if="isJobExpanded(job.id) && getTimelineForJob(job.id)" class="timeline-container ms-3">
+                <!-- Loading State -->
+                <div v-if="isTimelineLoading(job.id)" class="text-center py-2">
+                  <span class="spinner-border spinner-border-sm"></span>
+                  Lädt Kommunikationen...
                 </div>
 
-                <!-- Timeline (Level 3) - kompakt ohne Überschrift -->
-                <div v-if="getTimelineForJob(job.id)" class="timeline-container">
-                  <!-- Loading State -->
-                  <div v-if="isTimelineLoading(job.id)" class="text-center py-2">
-                    <span class="spinner-border spinner-border-sm"></span>
-                    Lädt...
+                <!-- Timeline Items when loaded -->
+                <div v-else class="timeline-items">
+                  <!-- 
+                    CREATE Mode TimelineItem
+                    Wird am Anfang gerendert wenn Benutzer "+ Kommunikation" geklickt hat
+                  -->
+                  <TimelineItem
+                    v-if="creatingCommunicationForJobId === job.id && selectedCommunicationType"
+                    mode="create"
+                    :communication-type="selectedCommunicationType"
+                    :job-id="job.id"
+                    :is-expanded="true"
+                    :communication-statuses="props.communicationStatuses"
+                    @toggle="() => {}"
+                    @edit="() => {}"
+                    @update="(newComm) => {
+                      const timeline = getTimelineForJob(job.id);
+                      if (timeline && timeline.content) {
+                        timeline.content.unshift(newComm);
+                      }
+                      cancelCreateCommunication();
+                    }"
+                    @delete="() => cancelCreateCommunication()"
+                  />
+
+                  <!-- 
+                    EDIT Mode TimelineItems
+                    Existierende Kommunikationen
+                  -->
+                  <TimelineItem
+                    v-for="(comm, index) in getTimelineForJob(job.id).content"
+                    :key="comm.id ? `${job.id}-${comm.id}` : `${job.id}-temp-${index}`"
+                    mode="edit"
+                    :communication="comm"
+                    :job-id="job.id"
+                    :is-expanded="isCommunicationExpanded(comm.id)"
+                    :communication-statuses="props.communicationStatuses"
+                    @toggle="() => toggleCommunication(comm.id)"
+                    @edit="emit('edit-communication', comm)"
+                    @update="(updatedComm) => updateCommunication(comm.id, updatedComm)"
+                    @delete="emit('delete-communication', comm.id)"
+                  />
+                </div>
+
+                <!-- 
+                  Timeline Controls: Pagination, Filter Buttons, Create Communication
+                -->
+                <div class="timeline-controls">
+                  <!-- Create Communication Button mit Dropdown -->
+                  <div class="btn-group" role="group">
+                    <button
+                      class="btn btn-sm btn-success"
+                      @click.stop="startCreateCommunication(job.id)"
+                    >
+                      + Kommunikation
+                    </button>
+
+                    <!-- Dropdown Menu für Kommunikationstyp-Auswahl -->
+                    <div
+                      v-if="creatingCommunicationForJobId === job.id && showCommunicationTypeMenu"
+                      class="communication-type-menu"
+                    >
+                      <div class="menu-header">Kommunikationstyp auswählen:</div>
+                      <button
+                        v-for="commType in communicationTypes"
+                        :key="commType.type"
+                        class="menu-item"
+                        @click="selectCommunicationType(commType.type)"
+                      >
+                        <span class="icon">{{ commType.icon }}</span>
+                        <span class="label">{{ commType.label }}</span>
+                      </button>
+                      <button
+                        class="menu-item cancel"
+                        @click="cancelCreateCommunication"
+                      >
+                        ✕ Abbrechen
+                      </button>
+                    </div>
                   </div>
 
-                  <!-- Timeline Items -->
-                  <div v-else class="timeline-items">
-                    <!-- 🔧 CREATE Mode TimelineItem (am Anfang, nur wenn aktiv) -->
-                    <TimelineItem
-                      v-if="creatingCommunicationForJobId === job.id && selectedCommunicationType"
-                      mode="create"
-                      :communication-type="selectedCommunicationType"
-                      :job-id="job.id"
-                      :is-expanded="true"
-                      :communication-statuses="props.communicationStatuses"
-                      @toggle="() => {}"
-                      @edit="() => {}"
-                      @update="(newComm) => {
-                        // Nach erfolgreicher Erstellung: TimelineItem liste aktualisieren
-                        const timeline = getTimelineForJob(job.id);
-                        if (timeline && timeline.content) {
-                          timeline.content.unshift(newComm);
-                        }
-                        cancelCreateCommunication();
-                      }"
-                      @delete="() => cancelCreateCommunication()"
-                    />
-
-                    <!-- EDIT Mode TimelineItems (existierende Kommunikationen) -->
-                    <TimelineItem
-                      v-for="(comm, index) in getTimelineForJob(job.id).content"
-                      :key="comm.id ? `${job.id}-${comm.id}` : `${job.id}-temp-${index}`"
-                      mode="edit"
-                      :communication="comm"
-                      :job-id="job.id"
-                      :is-expanded="isCommunicationExpanded(comm.id)"
-                      :communication-statuses="props.communicationStatuses"
-                      @toggle="() => toggleCommunication(comm.id)"
-                      @edit="emit('edit-communication', comm)"
-                      @update="(updatedComm) => updateCommunication(comm.id, updatedComm)"
-                      @delete="emit('delete-communication', comm.id)"
-                    />
+                  <!-- Pagination Info -->
+                  <div v-if="getTimelineForJob(job.id)?.content?.length > 0" class="pagination-info">
+                    <small class="text-muted">
+                      Seite {{ (getTimelineForJob(job.id).currentPage || 0) + 1 }} /
+                      {{ getTimelineForJob(job.id).totalPages }}
+                    </small>
                   </div>
 
-                  <!-- Pagination + Action Buttons (in einer Zeile) -->
-                  <div class="timeline-controls">
-                    <!-- Create Communication Button mit Dropdown Menu -->
-                    <div class="btn-group" role="group">
-                      <button
-                        class="btn btn-sm btn-success"
-                        @click.stop="startCreateCommunication(job.id)"
-                      >
-                        + Kommunikation
-                      </button>
+                  <!-- Pagination Buttons -->
+                  <span class="timeline-buttons">
+                    <button
+                      v-if="(getTimelineForJob(job.id).currentPage || 0) > 0"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="emit('prev-page', job.id)"
+                    >
+                      ← Vorherige
+                    </button>
+                    <button
+                      v-if="!getTimelineForJob(job.id).last"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="emit('next-page', job.id)"
+                    >
+                      Nächste →
+                    </button>
+                  </span>
 
-                      <!-- Dropdown Menu für Typ-Auswahl (wenn geöffnet) -->
-                      <div
-                        v-if="creatingCommunicationForJobId === job.id && showCommunicationTypeMenu"
-                        class="communication-type-menu"
-                      >
-                        <div class="menu-header">Kommunikationstyp auswählen:</div>
-                        <button
-                          v-for="commType in communicationTypes"
-                          :key="commType.type"
-                          class="menu-item"
-                          @click="selectCommunicationType(commType.type)"
-                        >
-                          <span class="icon">{{ commType.icon }}</span>
-                          <span class="label">{{ commType.label }}</span>
-                        </button>
-                        <button
-                          class="menu-item cancel"
-                          @click="cancelCreateCommunication"
-                        >
-                          ✕ Abbrechen
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Pagination Info (nur wenn Timeline nicht leer) -->
-                    <div v-if="getTimelineForJob(job.id)?.content?.length > 0" class="pagination-info">
-                      <small class="text-muted">
-                        Seite {{ (getTimelineForJob(job.id).currentPage || 0) + 1 }} /
-                        {{ getTimelineForJob(job.id).totalPages }}
-                      </small>
-                    </div>
-
-                    <!-- Pagination Buttons Container -->
-                    <span class="timeline-buttons">
-                      <button
-                        v-if="(getTimelineForJob(job.id).currentPage || 0) > 0"
-                        class="btn btn-sm btn-outline-secondary"
-                        @click="emit('prev-page', job.id)"
-                      >
-                        ← Vorherige
-                      </button>
-                      <button
-                        v-if="!getTimelineForJob(job.id).last"
-                        class="btn btn-sm btn-outline-secondary"
-                        @click="emit('next-page', job.id)"
-                      >
-                        Nächste →
-                      </button>
-                    </span>
-
-                    <!-- Filter Buttons Container -->
-                    <div class="timeline-filters">
-                      <button
-                        class="btn btn-sm btn-info"
-                        @click="emit('filter-by-company')"
-                        title="Filter auf diese Firma setzen"
-                      >
-                        🔍 Firma
-                      </button>
-                      <button
-                        class="btn btn-sm btn-info"
-                        @click="emit('filter-by-job')"
-                        title="Filter auf diesen Job setzen"
-                      >
-                        🔍 Job
-                      </button>
-                    </div>
+                  <!-- Filter Buttons -->
+                  <div class="timeline-filters">
+                    <button
+                      class="btn btn-sm btn-info"
+                      @click="emit('filter-by-company')"
+                      title="Filter auf diese Firma setzen"
+                    >
+                      🔍 Firma
+                    </button>
+                    <button
+                      class="btn btn-sm btn-info"
+                      @click="emit('filter-by-job')"
+                      title="Filter auf diesen Job setzen"
+                    >
+                      🔍 Job
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Create new Job Button -->
-            <div class="create-job-section">
-              <button class="btn btn-sm btn-success">
-                + Neuer Job für {{ company.name }}
+            <!-- 
+              Create new Job Button und Create Form
+              Button nur sichtbar wenn NICHT gerade im Create-Mode
+            -->
+            <div v-if="!creatingJobForCompanyId" class="create-job-section">
+              <button
+                class="btn btn-sm btn-success"
+                @click="startCreateJob(company.id)"
+              >
+                💼 + Neuer Job für {{ company.name }}
               </button>
             </div>
+
+            <!-- 
+              Create new Job Form
+              JobItem im CREATE-Mode
+              Wird angezeigt wenn creatingJobForCompanyId === company.id
+            -->
+            <JobItem
+              v-if="creatingJobForCompanyId === company.id"
+              :job="null"
+              :company-id="company.id"
+              :is-expanded="true"
+              :mode="'create'"
+              :communication-statuses="props.communicationStatuses"
+              @update="handleJobUpdate($event); cancelCreateJob();"
+              @delete="cancelCreateJob()"
+            />
           </div>
         </div>
       </div>
@@ -810,6 +1051,85 @@ const isTimelineLoading = (jobId) => {
 
 .hierarchical-tree {
   padding: 1rem 0;
+}
+
+/**
+ * ============================================
+ * Address Dropdown Styling
+ * ============================================
+ */
+
+.address-dropdown-container {
+  position: relative;
+  display: inline-block;
+}
+
+.address-dropdown-container .dropdown-toggle::after {
+  content: '';
+  display: inline-block;
+  margin-left: 0.5rem;
+  vertical-align: 0.255em;
+  border-top: 0.3em solid;
+  border-right: 0.3em solid transparent;
+  border-bottom: 0;
+  border-left: 0.3em solid transparent;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  min-width: 200px;
+  z-index: 1000;
+  margin-top: 0.25rem;
+}
+
+.dropdown-menu-addresses {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out;
+}
+
+.dropdown-item:hover {
+  background-color: #f0f0f0;
+}
+
+.dropdown-item:first-child {
+  border-radius: 0.375rem 0.375rem 0 0;
+}
+
+.dropdown-item:last-child {
+  border-radius: 0 0 0.375rem 0.375rem;
+}
+
+.dropdown-header {
+  display: block;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0;
+  color: #6c757d;
+  font-weight: 600;
+}
+
+.dropdown-divider {
+  height: 0;
+  margin: 0.5rem 0;
+  overflow: hidden;
+  border-top: 1px solid #e9ecef;
 }
 
 /**
