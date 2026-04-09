@@ -45,6 +45,14 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  communicationTypes: {
+    type: Array,
+    default: () => [],
+  },
+  availablePeople: {
+    type: Array,
+    default: () => [],
+  },
 });
 
 console.log('[Filter Debug] HierarchicalDataTree Props empfangen:', { filters: props.filters });
@@ -74,6 +82,38 @@ const expandedCompanies = ref(new Set());
 const expandedJobs = ref(new Set());
 const expandedAddresses = ref(new Set());
 const expandedCommunications = ref(new Set());
+
+/**
+ * State für Adressenlisten-Anzeige per Firma
+ * expandedAddressListsByCompanyId = Set von Company IDs deren Adressenlisten angezeigt werden
+ */
+const expandedAddressListsByCompanyId = ref(new Set());
+
+/**
+ * State für Jobslisten-Anzeige per Firma
+ * expandedJobsListsByCompanyId = Set von Company IDs deren Jobslisten angezeigt werden
+ */
+const expandedJobsListsByCompanyId = ref(new Set());
+
+/**
+ * State für Addressenlisten-Anzeige per Job
+ * expandedAddressListsByJobId = Set von Job IDs deren Adressenlisten angezeigt werden
+ */
+const expandedAddressListsByJobId = ref(new Set());
+
+/**
+ * State für Kommunikationslisten-Anzeige per Job
+ * expandedCommunicationsListsByJobId = Set von Job IDs deren Kommunikationslisten angezeigt werden
+ */
+const expandedCommunicationsListsByJobId = ref(new Set());
+
+/**
+ * State für Frontend-Filtering von Kommunikationen (lokal pro Timeline)
+ * Unabhängig von globalen Filtern - wird nur auf die sichtbaren Communications angewendet
+ * 
+ * Structure: { [jobId]: { person: null, type: null, status: null, fromDate: null } }
+ */
+const communicationFiltersByJob = ref({});
 
 /**
  * State für Create-Mode einer neuen Kommunikation
@@ -111,16 +151,8 @@ const creatingCompanyId = ref(null);
 const editingCompanyId = ref(null);
 
 /**
- * Verfügbare Kommunikationstypen
+ * Verfügbare Kommunikationstypen - ENTFERNT: nutzen jetzt props.communicationTypes aus DashboardView
  */
-const communicationTypes = [
-  { type: 'PHONE', icon: '📞', label: 'Telefon' },
-  { type: 'MAIL', icon: '✉️', label: 'E-Mail' },
-  { type: 'WEBFORM', icon: '🌐', label: 'Web-Formular' },
-  { type: 'TALK', icon: '👥', label: 'Gespräch' },
-  { type: 'TRIAL', icon: '🧪', label: 'Test' },
-  { type: 'INTERVIEW', icon: '👔', label: 'Interview' },
-];
 
 // Initial: alle Firmen + alle Jobs collapsed, Adressen/Communications collapsed
 const initializeExpanded = (companies) => {
@@ -410,6 +442,37 @@ const updateCommunication = (commId, updatedComm) => {
     }
   }
 };
+
+/**
+ * Delete communication from timeline
+ * 
+ * Wichtig: Diese Funktion MUSS den kommunikation aus der timelinesMap entfernen!
+ * Sonst bleibt sie im RAM und wird wieder angezeigt
+ */
+const deleteCommunication = (commId) => {
+  if (!props.companies) {
+    console.warn('⚠️ Props.companies sind nicht verfügbar');
+    return;
+  }
+  
+  // Durchsuche alle Companies/Jobs/Timelines um die Communication zu finden und zu löschen
+  for (const company of props.companies) {
+    const jobs = props.jobsMap?.[company.id] || [];
+    for (const job of jobs) {
+      const timeline = getTimelineForJob(job.id);
+      if (timeline && timeline.content) {
+        const commIndex = timeline.content.findIndex(c => c.id === commId);
+        if (commIndex !== -1) {
+          // ✅ Entferne die Communication aus der Timeline
+          timeline.content.splice(commIndex, 1);
+          console.log('✅ Kommunikation gelöscht:', commId);
+          return;
+        }
+      }
+    }
+  }
+};
+
 
 /**
  * Create Communication Handlers
@@ -724,14 +787,22 @@ const handleCompanyUpdate = (company) => {
   const existingIndex = props.companies.findIndex(c => c.id === company.id);
   
   if (existingIndex !== -1) {
+    // UPDATE: Ersetze bestehenden Company mit allen Feldern einschließlich Adressen
+    // ⚠️ WICHTIG: Wenn Backend keine addresses zurückgibt, bewahre die alten addresses
+    // ABER: Wenn Backend addresses EXPLIZIT als leeres Array schickt = neue Adressen hinzugefügt/gelöscht
     const oldCompany = props.companies[existingIndex];
-    if (!company.addresses) {
+    if (!company.addresses && oldCompany.addresses) {
       company.addresses = oldCompany.addresses;
+      console.log('⚠️ Company.addresses nicht vom Backend geliefert, behalte alte Adressen');
+    } else if (company.addresses) {
+      console.log('✅ Company.addresses aktualisiert von Backend:', company.addresses.length);
     }
+    
     props.companies[existingIndex] = company;
     console.log('✅ Firma aktualisiert:', company.id);
     cancelEditCompany();
   } else {
+    // CREATE: Neue Company
     if (!company.addresses) {
       company.addresses = [];
     }
@@ -752,8 +823,28 @@ const handleCompanyDelete = async (companyId) => {
     }
 
     if (props.jobsMap && props.jobsMap[companyId]) {
+      // Cleanup timelinesMap für alle Jobs dieser Company
+      const jobsOfCompany = props.jobsMap[companyId];
+      for (const job of jobsOfCompany) {
+        if (props.timelinesMap && props.timelinesMap[job.id]) {
+          delete props.timelinesMap[job.id];
+        }
+      }
       delete props.jobsMap[companyId];
+      console.log('✅ JobsMap und Timelines gelöscht für Company:', companyId);
     }
+
+    // 🔄 CLEANUP: Expand-Sets aufräumen
+    if (expandedCompanies.value.has(companyId)) {
+      expandedCompanies.value.delete(companyId);
+    }
+    if (expandedAddressListsByCompanyId.value.has(companyId)) {
+      expandedAddressListsByCompanyId.value.delete(companyId);
+    }
+    if (expandedJobsListsByCompanyId.value.has(companyId)) {
+      expandedJobsListsByCompanyId.value.delete(companyId);
+    }
+    
   } catch (err) {
     console.error('❌ Fehler beim Löschen der Firma:', err);
     alert('Fehler beim Löschen der Firma: ' + (err.response?.data?.message || err.message));
@@ -783,6 +874,10 @@ const cancelCreateJob = () => {
 /**
  * Handle Job Created/Updated
  * Nach erfolgreichem POST oder PUT wird dieser Handler aufgerufen
+ * 
+ * Synchronisiert:
+ * 1. props.jobsMap[companyId] - lokaler Cache der Jobs pro Company
+ * 2. props.allJobsForFilter - globale Job-Liste für Filter-Dropdown
  */
 const handleJobUpdate = (job) => {
   // Der Job wurde vom Backend zurückgegeben
@@ -812,6 +907,23 @@ const handleJobUpdate = (job) => {
     console.log('✅ Neuer Job erstellt:', job.id);
   }
 
+  // 🔄 SYNC: Aktualisiere auch allJobsForFilter wenn vorhanden
+  if (props.allJobsForFilter) {
+    const filterIndex = props.allJobsForFilter.findIndex(j => j.id === job.id);
+    if (filterIndex !== -1) {
+      // Merge: Update nur die Felder die in allJobsForFilter erwartet werden
+      props.allJobsForFilter[filterIndex] = {
+        ...props.allJobsForFilter[filterIndex],
+        ...job
+      };
+      console.log('✅ allJobsForFilter aktualisiert für Job:', job.id);
+    } else {
+      // Neuer Job: Füge hinzu
+      props.allJobsForFilter.push(job);
+      console.log('✅ Neuer Job in allJobsForFilter hinzugefügt:', job.id);
+    }
+  }
+
   // Create-Mode beenden
   cancelCreateJob();
 };
@@ -820,6 +932,11 @@ const handleJobUpdate = (job) => {
  * Handle Job Deleted
  * Nach erfolgreichem DELETE wird dieser Handler aufgerufen
  * Das Backend löscht automatisch alle zugehörigen Timeline-Einträge (cascading)
+ * 
+ * Synchronisiert:
+ * 1. props.jobsMap[companyId] - entfernt aus lokalem Cache
+ * 2. props.allJobsForFilter - entfernt aus globaler Liste
+ * 3. props.timelinesMap - aufräumen der Timeline-Daten
  */
 const handleJobDelete = async (jobId, companyId) => {
   try {
@@ -837,10 +954,33 @@ const handleJobDelete = async (jobId, companyId) => {
       }
     }
 
+    // 🔄 SYNC: Entferne auch aus allJobsForFilter
+    if (props.allJobsForFilter) {
+      const filterIndex = props.allJobsForFilter.findIndex(j => j.id === jobId);
+      if (filterIndex !== -1) {
+        props.allJobsForFilter.splice(filterIndex, 1);
+        console.log('✅ Job aus allJobsForFilter entfernt:', jobId);
+      }
+    }
+
     // Cleanup: Wenn Timeline geladen war, entfernen
     if (props.timelinesMap && props.timelinesMap[jobId]) {
       delete props.timelinesMap[jobId];
+      console.log('✅ Timeline für Job gelöscht:', jobId);
     }
+
+    // 🔄 CLEANUP: Expand-Sets aufräumen (optional aber empfohlen)
+    if (expandedJobs.value.has(jobId)) {
+      expandedJobs.value.delete(jobId);
+    }
+    if (expandedCommunicationsListsByJobId.value.has(jobId)) {
+      expandedCommunicationsListsByJobId.value.delete(jobId);
+    }
+    if (expandedAddressListsByJobId.value.has(jobId)) {
+      expandedAddressListsByJobId.value.delete(jobId);
+    }
+    delete communicationFiltersByJob.value[jobId];
+    
   } catch (err) {
     console.error('❌ Fehler beim Löschen des Jobs:', err);
     alert('Fehler beim Löschen des Jobs: ' + (err.response?.data?.message || err.message));
@@ -855,6 +995,72 @@ const isCompanyExpanded = (companyId) =>
 const isJobExpanded = (jobId) => expandedJobs.value.has(jobId);
 const isAddressExpanded = (addressId) =>
   expandedAddresses.value.has(addressId);
+
+/**
+ * Toggle Adressenliste für eine Firma
+ */
+const toggleAddressListForCompany = (companyId) => {
+  if (expandedAddressListsByCompanyId.value.has(companyId)) {
+    expandedAddressListsByCompanyId.value.delete(companyId);
+  } else {
+    expandedAddressListsByCompanyId.value.add(companyId);
+  }
+};
+
+const isAddressListShown = (companyId) =>
+  expandedAddressListsByCompanyId.value.has(companyId);
+
+/**
+ * Toggle Jobsliste für eine Firma
+ * Lädt die vollständigen Job-Daten wenn nötig (mit addressId, communicationCount, etc.)
+ */
+const toggleJobsListForCompany = (companyId) => {
+  if (expandedJobsListsByCompanyId.value.has(companyId)) {
+    expandedJobsListsByCompanyId.value.delete(companyId);
+  } else {
+    expandedJobsListsByCompanyId.value.add(companyId);
+    // Lade Jobs wenn noch nicht im Cache
+    if (!props.jobsMap?.[companyId]) {
+      emit('load-jobs', companyId);
+    }
+  }
+};
+
+const isJobsListShown = (companyId) =>
+  expandedJobsListsByCompanyId.value.has(companyId);
+
+/**
+ * Toggle Addressenliste für einen Job
+ */
+const toggleAddressListForJob = (jobId) => {
+  if (expandedAddressListsByJobId.value.has(jobId)) {
+    expandedAddressListsByJobId.value.delete(jobId);
+  } else {
+    expandedAddressListsByJobId.value.add(jobId);
+  }
+};
+
+const isAddressListShownForJob = (jobId) =>
+  expandedAddressListsByJobId.value.has(jobId);
+
+/**
+ * Toggle Kommunikationsliste für einen Job
+ */
+const toggleCommunicationsListForJob = (jobId) => {
+  if (expandedCommunicationsListsByJobId.value.has(jobId)) {
+    expandedCommunicationsListsByJobId.value.delete(jobId);
+  } else {
+    expandedCommunicationsListsByJobId.value.add(jobId);
+    // Wenn Kommunikationen expandiert werden, lade Timeline falls noch nicht geladen
+    if (!props.timelinesMap?.[jobId]) {
+      emit('load-timeline', jobId);
+    }
+  }
+};
+
+const isCommunicationsListShown = (jobId) =>
+  expandedCommunicationsListsByJobId.value.has(jobId);
+
 const isCommunicationExpanded = (commId) =>
   expandedCommunications.value.has(commId);
 
@@ -880,6 +1086,124 @@ const getTimelineForJob = (jobId) => {
  */
 const isTimelineLoading = (jobId) => {
   return props.loadingTimelineMap?.[jobId];
+};
+
+/**
+ * ============================================
+ * Communications Frontend-Filtering
+ * ============================================
+ */
+
+/**
+ * Hole die Kommunikationen für einen Job mit Filterung angewendet
+ * 
+ * Filter werden lokal pro Job definiert in communicationFiltersByJob
+ * - person: filtere nach Person
+ * - type: filtere nach Kommunikationstyp
+ * - status: filtere nach Status
+ * - fromDate: filtere nach Datum ab X
+ * 
+ * Wenn kein Filter für einen Job gesetzt, werden alle Communications angezeigt
+ */
+const getVisibleCommunicationsForJob = (jobId) => {
+  const timeline = getTimelineForJob(jobId);
+  if (!timeline?.content) {
+    return [];
+  }
+
+  let communications = timeline.content;
+  
+  // Hole die Filter für diesen Job (falls gesetzt)
+  const filters = communicationFiltersByJob.value[jobId] || {};
+  
+  // Keine Filter → alle anzeigen
+  if (!filters.person && !filters.type && !filters.status && !filters.fromDate) {
+    return communications;
+  }
+  
+  // Wende alle aktiven Filter an
+  communications = communications.filter(comm => {
+    // Filter: Person
+    if (filters.person) {
+      // Person kann in comm.person oder comm.mailPerson oder comm.telPerson sein
+      const personMatch = (
+        comm.person?.includes(filters.person) ||
+        comm.mailPerson?.includes(filters.person) ||
+        comm.telPerson?.includes(filters.person)
+      );
+      if (!personMatch) return false;
+    }
+    
+    // Filter: Type
+    if (filters.type && comm.type !== filters.type) {
+      return false;
+    }
+    
+    // Filter: Status
+    if (filters.status && comm.status !== filters.status) {
+      return false;
+    }
+    
+    // Filter: From Date (ISO date oder "2026-04-09")
+    if (filters.fromDate) {
+      const commDate = comm.date ? comm.date.substring(0, 10) : null;
+      if (!commDate || commDate < filters.fromDate) {
+        return false;
+      }
+    }
+    
+    return true;
+  });
+  
+  console.log(`[Communications Filter] Job ${jobId}: ${communications.length} von ${timeline.content.length} Communications nach Filtern angezeigt`, {
+    filters: filters,
+    appliedFilters: Object.entries(filters).filter(([_, v]) => v).map(([k]) => k)
+  });
+  
+  return communications;
+};
+
+/**
+ * Setze einen Filter für Communications eines Jobs
+ * 
+ * Usage: 
+ * - setCommFilter(jobId, 'person', 'John')
+ * - setCommFilter(jobId, 'type', 'PHONE')
+ */
+const setCommFilter = (jobId, filterKey, value) => {
+  if (!communicationFiltersByJob.value[jobId]) {
+    communicationFiltersByJob.value[jobId] = {};
+  }
+  
+  communicationFiltersByJob.value[jobId][filterKey] = value || null;
+  console.log(`[Communications Filter] Filter für Job ${jobId} gesetzt:`, {
+    filterKey,
+    value,
+    allFilters: communicationFiltersByJob.value[jobId]
+  });
+};
+
+/**
+ * Lockere die Filter für einen Job auf (entferne sie)
+ * z.B. nach Create/Update damit die neue Communication nicht ausgeblendet wird
+ * 
+ * Usage:
+ * - relaxCommFilters(jobId) - entferne alle Filter für diesen Job
+ * - relaxCommFilters(jobId, 'strict') - entferne nur 'strikte' Filter (nicht person/type)
+ */
+const relaxCommFilters = (jobId, mode = 'all') => {
+  if (!communicationFiltersByJob.value[jobId]) return;
+  
+  if (mode === 'all') {
+    // Entferne ALLE Filter
+    communicationFiltersByJob.value[jobId] = {};
+    console.log(`[Communications Filter] ✅ Alle Filter für Job ${jobId} gelockert!`);
+  } else if (mode === 'strict') {
+    // Entferne nur Status- und Date-Filter (behalte type/person)
+    communicationFiltersByJob.value[jobId].status = null;
+    communicationFiltersByJob.value[jobId].fromDate = null;
+    console.log(`[Communications Filter] ✅ Strikte Filter für Job ${jobId} gelockert!`);
+  }
 };
 </script>
 
@@ -909,13 +1233,17 @@ const isTimelineLoading = (jobId) => {
           :mode="'view'"
           :is-expanded="isCompanyExpanded(company.id)"
           :job-count="getJobsForCompany(company.id).length"
+          :are-addresses-expanded="isAddressListShown(company.id)"
+          :are-jobs-expanded="isJobsListShown(company.id)"
           @toggle="toggleCompany(company.id)"
           @edit-request="startEditCompany(company.id)"
           @delete="handleCompanyDelete(company.id)"
+          @toggle-addresses="toggleAddressListForCompany(company.id)"
+          @toggle-jobs="toggleJobsListForCompany(company.id)"
         />
 
         <!-- ADRESSEN (zwischen Header und Content) -->
-        <div v-if="isCompanyExpanded(company.id)" class="addresses-list">
+        <div v-if="isAddressListShown(company.id)" class="addresses-list">
           <!-- Existierende Adressen -->
           <AddressItem
             v-for="address in company.addresses"
@@ -954,8 +1282,8 @@ const isTimelineLoading = (jobId) => {
           />
         </div>
 
-        <!-- COMPANY CONTENT (expandiert) -->
-        <div v-if="isCompanyExpanded(company.id)" class="company-content">
+        <!-- COMPANY CONTENT (Jobs anzeigen wenn Jobs-Liste expanded) -->
+        <div v-if="isJobsListShown(company.id)" class="company-content">
           <div class="jobs-section">
             <!-- ============================================
                  JOBS (Level 2) 
@@ -989,17 +1317,23 @@ const isTimelineLoading = (jobId) => {
                 :is-expanded="isJobExpanded(job.id)"
                 :mode="'view'"
                 :job-statuses="props.jobStatuses"
+                :has-address="!!(job.addressId || job.city || job.street || job.postcode)"
+                :communications-count="job.communicationCount || 0"
+                :are-addresses-expanded="isAddressListShownForJob(job.id)"
+                :are-communications-expanded="isCommunicationsListShown(job.id)"
                 @toggle="toggleJob(job.id)"
                 @update="handleJobUpdate($event)"
                 @delete="handleJobDelete($event, company.id)"
+                @toggle-addresses="toggleAddressListForJob(job.id)"
+                @toggle-communications="toggleCommunicationsListForJob(job.id)"
               />
 
               <!-- 
-                Job Address: Wird NACH dem Job gerendert
-                Zeigt die Adresse des Jobs an (falls vorhanden)
+                Job Address: Wird NACH dem Job gerendert (wenn Badge geklickt wurde)
+                Zeigt die Adresse des Jobs an (falls vorhanden und expandiert)
               -->
               <AddressItem
-                v-if="job.addressId || job.city || job.street || job.postcode"
+                v-if="isAddressListShownForJob(job.id) && (job.addressId || job.city || job.street || job.postcode)"
                 :address="{
                   id: job.addressId,
                   street: job.street || null,
@@ -1023,11 +1357,12 @@ const isTimelineLoading = (jobId) => {
               <!-- 
                 Button/Dropdown zum Adresse zuweisen oder neu erstellen
                 Nur sichtbar wenn:
+                - Adressenliste ist expanded
                 - Kein addressId vorhanden (max 1 Adresse pro Job)
                 - Nicht gerade im Create-Mode für eine Adresse
               -->
               <div 
-                v-if="!job.addressId && creatingAddressForJobId !== job.id"
+                v-if="isAddressListShownForJob(job.id) && !job.addressId && creatingAddressForJobId !== job.id"
                 class="address-dropdown-container ms-2 mb-2"
               >
                 <!-- Dropdown Button -->
@@ -1072,10 +1407,10 @@ const isTimelineLoading = (jobId) => {
 
               <!-- 
                 Job Address Create Form
-                Wird inline angezeigt wenn Benutzer "+ Adresse hinzufügen" klickt
+                Wird inline angezeigt wenn Benutzer "+ Adresse hinzufügen" klickt und Adressenliste expanded
               -->
               <AddressItem
-                v-if="creatingAddressForJobId === job.id"
+                v-if="isAddressListShownForJob(job.id) && creatingAddressForJobId === job.id"
                 :address="{}"
                 :parent-type="'job'"
                 :parent-id="job.id"
@@ -1087,17 +1422,84 @@ const isTimelineLoading = (jobId) => {
 
               <!-- 
                 Timeline Container (Level 3)
-                Nur rendern wenn Job expanded ist
+                Nur rendern wenn Kommunikationen Badge geklickt wurde
               -->
-              <div v-if="isJobExpanded(job.id) && getTimelineForJob(job.id)" class="timeline-container ms-3">
+              <div v-if="isCommunicationsListShown(job.id) && getTimelineForJob(job.id)" class="timeline-container ms-3">
                 <!-- Loading State -->
                 <div v-if="isTimelineLoading(job.id)" class="text-center py-2">
                   <span class="spinner-border spinner-border-sm"></span>
                   Lädt Kommunikationen...
                 </div>
 
+                <!-- 
+                  Communications Filter Controls - NOW AT THE BEGINNING!
+                  - Person, Type, Status, From Date
+                  - Mit "Löschen" Button um alle Filter zu resetten
+                -->
+                <div v-if="!isTimelineLoading(job.id)" class="communications-filter-controls">
+                  <div class="filter-group">
+                    <!-- Filter: Person -->
+                    <select 
+                      class="form-select form-select-sm"
+                      :value="communicationFiltersByJob[job.id]?.person || ''"
+                      @change="setCommFilter(job.id, 'person', $event.target.value || null)"
+                      title="Nach Person filtern"
+                    >
+                      <option value="">👤 Person...</option>
+                      <option v-for="person in props.availablePeople" :key="person" :value="person">
+                        {{ person }}
+                      </option>
+                    </select>
+
+                    <!-- Filter: Type -->
+                    <select 
+                      class="form-select form-select-sm"
+                      :value="communicationFiltersByJob[job.id]?.type || ''"
+                      @change="setCommFilter(job.id, 'type', $event.target.value || null)"
+                      title="Nach Kommunikationstyp filtern"
+                    >
+                      <option value="">📞 Typ...</option>
+                      <option v-for="type in props.communicationTypes" :key="type" :value="type">
+                        {{ type }}
+                      </option>
+                    </select>
+
+                    <!-- Filter: Status -->
+                    <select 
+                      class="form-select form-select-sm"
+                      :value="communicationFiltersByJob[job.id]?.status || ''"
+                      @change="setCommFilter(job.id, 'status', $event.target.value || null)"
+                      title="Nach Status filtern"
+                    >
+                      <option value="">✓ Status...</option>
+                      <option v-for="status in props.communicationStatuses" :key="status" :value="status">
+                        {{ status }}
+                      </option>
+                    </select>
+
+                    <!-- Filter: From Date -->
+                    <input 
+                      type="date"
+                      class="form-control form-control-sm"
+                      :value="communicationFiltersByJob[job.id]?.fromDate || ''"
+                      @change="setCommFilter(job.id, 'fromDate', $event.target.value || null)"
+                      title="Ab Datum filtern"
+                    />
+
+                    <!-- Reset Button -->
+                    <button
+                      v-if="Object.values(communicationFiltersByJob[job.id] || {}).some(v => v)"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="relaxCommFilters(job.id)"
+                      title="Alle Filter zurücksetzen"
+                    >
+                      🔄 Löschen
+                    </button>
+                  </div>
+                </div>
+
                 <!-- Timeline Items when loaded -->
-                <div v-else class="timeline-items">
+                <div v-if="!isTimelineLoading(job.id)" class="timeline-items">
                   <!-- 
                     CREATE Mode TimelineItem
                     Wird am Anfang gerendert wenn Benutzer "+ Kommunikation" geklickt hat
@@ -1116,6 +1518,8 @@ const isTimelineLoading = (jobId) => {
                       if (timeline && timeline.content) {
                         timeline.content.unshift(newComm);
                       }
+                      // ✅ Auto-Lockern: Nach Create sollte die neue Communication sichtbar sein
+                      relaxCommFilters(job.id, 'strict');
                       cancelCreateCommunication();
                     }"
                     @delete="() => cancelCreateCommunication()"
@@ -1123,10 +1527,10 @@ const isTimelineLoading = (jobId) => {
 
                   <!-- 
                     EDIT Mode TimelineItems
-                    Existierende Kommunikationen
+                    Existierende Kommunikationen - gefiltert
                   -->
                   <TimelineItem
-                    v-for="(comm, index) in getTimelineForJob(job.id).content"
+                    v-for="(comm, index) in getVisibleCommunicationsForJob(job.id)"
                     :key="comm.id ? `${job.id}-${comm.id}` : `${job.id}-temp-${index}`"
                     mode="edit"
                     :communication="comm"
@@ -1135,8 +1539,15 @@ const isTimelineLoading = (jobId) => {
                     :communication-statuses="props.communicationStatuses"
                     @toggle="() => toggleCommunication(comm.id)"
                     @edit="emit('edit-communication', comm)"
-                    @update="(updatedComm) => updateCommunication(comm.id, updatedComm)"
-                    @delete="emit('delete-communication', comm.id)"
+                    @update="(updatedComm) => {
+                      updateCommunication(comm.id, updatedComm);
+                      // ✅ Auto-Lockern: Nach Update sollte die geänderte Communication sichtbar sein
+                      relaxCommFilters(job.id, 'strict');
+                    }"
+                    @delete="(commId) => {
+                      deleteCommunication(commId);
+                      emit('delete-communication', commId);
+                    }"
                   />
                 </div>
 
@@ -1160,13 +1571,12 @@ const isTimelineLoading = (jobId) => {
                     >
                       <div class="menu-header">Kommunikationstyp auswählen:</div>
                       <button
-                        v-for="commType in communicationTypes"
-                        :key="commType.type"
+                        v-for="commType in props.communicationTypes"
+                        :key="commType"
                         class="menu-item"
-                        @click="selectCommunicationType(commType.type)"
+                        @click="selectCommunicationType(commType)"
                       >
-                        <span class="icon">{{ commType.icon }}</span>
-                        <span class="label">{{ commType.label }}</span>
+                        <span class="label">{{ commType }}</span>
                       </button>
                       <button
                         class="menu-item cancel"
@@ -2372,5 +2782,55 @@ const isTimelineLoading = (jobId) => {
 .btn-group {
   position: relative;
   display: inline-block;
+}
+
+/**
+ * ============================================
+ * COMMUNICATIONS FILTER CONTROLS
+ * ============================================
+ */
+
+.communications-filter-controls {
+  display: flex;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  margin: 0.5rem 0;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+}
+
+.filter-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.communications-filter-controls .form-select,
+.communications-filter-controls .form-control {
+  font-size: 0.85rem;
+  padding: 0.375rem 0.75rem;
+  height: auto;
+  min-width: fit-content;
+  max-width: 150px;
+}
+
+.communications-filter-controls .form-select {
+  padding-right: 2.25rem;
+}
+
+.communications-filter-controls .btn {
+  font-size: 0.85rem;
+  padding: 0.375rem 0.75rem;
+}
+
+.communications-filter-controls input[type="date"] {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.85rem;
 }
 </style>

@@ -26,19 +26,12 @@ const props = defineProps({
   jobs: Array, // Array von Jobs der aktuellen Firma
   allJobsForFilter: Array, // ALLE Jobs für Dropdown (auch nicht geöffnete Firmen)
   jobStatuses: Array,
-  communicationStatuses: Array,
-  communicationTypes: Array,
-  availablePeople: Array,
 });
 
 const emit = defineEmits([
   'update:companyId',
   'update:jobId',
   'update:jobStatus',
-  'update:person',
-  'update:communicationType',
-  'update:communicationStatus',
-  'update:fromDate',
   'reset',
 ]);
 
@@ -117,22 +110,6 @@ const handleJobChange = (jobId) => {
 
 const handleJobStatusChange = (status) => {
   emit('update:jobStatus', status);
-};
-
-const handlePersonChange = (person) => {
-  emit('update:person', person);
-};
-
-const handleCommunicationTypeChange = (type) => {
-  emit('update:communicationType', type);
-};
-
-const handleCommunicationStatusChange = (status) => {
-  emit('update:communicationStatus', status);
-};
-
-const handleFromDateChange = (date) => {
-  emit('update:fromDate', date);
 };
 
 /**
@@ -286,66 +263,6 @@ watch(() => props.filters, (newFilters) => {
               {{ status }}
             </option>
           </select>
-        </div>
-
-        <!-- 3️⃣ Person -->
-        <div class="filter-item">
-          <label for="filter-person" class="form-label small">Person</label>
-          <select
-            id="filter-person"
-            :class="filterClass"
-            :value="filters.person || ''"
-            @change="(e) => handlePersonChange(e.target.value || null)"
-          >
-            <option value="">— Alle Personen —</option>
-            <option v-for="person in availablePeople" :key="person" :value="person">
-              {{ person }}
-            </option>
-          </select>
-        </div>
-
-        <!-- 4️⃣ Kommunikations-Typ -->
-        <div class="filter-item">
-          <label for="filter-com-type" class="form-label small">Kom.-Typ</label>
-          <select
-            id="filter-com-type"
-            :class="filterClass"
-            :value="filters.communicationType || ''"
-            @change="(e) => handleCommunicationTypeChange(e.target.value || null)"
-          >
-            <option value="">— Alle Typen —</option>
-            <option v-for="type in communicationTypes" :key="type" :value="type">
-              {{ type }}
-            </option>
-          </select>
-        </div>
-
-        <!-- 5️⃣ Kommunikations-Status -->
-        <div class="filter-item">
-          <label for="filter-com-status" class="form-label small">Kom.-Status</label>
-          <select
-            id="filter-com-status"
-            :class="filterClass"
-            :value="filters.communicationStatus || ''"
-            @change="(e) => handleCommunicationStatusChange(e.target.value || null)"
-          >
-            <option value="">— Alle Status —</option>
-            <option v-for="status in communicationStatuses" :key="status" :value="status">
-              {{ status }}
-            </option>
-          </select>
-        </div>
-
-        <!-- 6️⃣ Datum (from) -->
-        <div class="filter-item">
-          <label for="filter-date" class="form-label small">Datum (ab)</label>
-          <input
-            id="filter-date"
-            type="date"
-            class="form-control form-control-sm"
-            :value="filters.fromDate || ''"
-            @change="(e) => handleFromDateChange(e.target.value || null)"
-          />
         </div>
 
         <!-- Reset Button -->

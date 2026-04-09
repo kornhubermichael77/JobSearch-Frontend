@@ -37,9 +37,25 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  hasAddress: {
+    type: Boolean,
+    default: false,  // Für View-Mode: hat dieser Job eine Adresse?
+  },
+  communicationsCount: {
+    type: Number,
+    default: 0,  // Für View-Mode: Anzahl der Kommunikationen
+  },
+  areAddressesExpanded: {
+    type: Boolean,
+    default: false,  // Für View-Mode: ist die Adresse gerade expanded?
+  },
+  areCommunicationsExpanded: {
+    type: Boolean,
+    default: false,  // Für View-Mode: sind die Kommunikationen gerade expanded?
+  },
 });
 
-const emit = defineEmits(['toggle', 'update', 'delete']);
+const emit = defineEmits(['toggle', 'update', 'delete', 'toggle-addresses', 'toggle-communications']);
 
 /**
  * Auto-Aktiviere Edit-Modus wenn CREATE-Mode startet
@@ -349,6 +365,29 @@ const getStatusClass = (status) => {
             <span v-if="props.job?.status" class="meta-part">
               {{ props.job.status }}
             </span>
+          </span>
+        </div>
+
+        <!-- RIGHT: Badges + Toggles (für Adresse und Kommunikationen) -->
+        <div class="job-badges-section">
+          <!-- Address Toggle Badge (immer sichtbar im View-Mode) -->
+          <span
+            v-if="mode === 'view'"
+            :class="['badge', 'bg-light', 'text-dark', 'address-badge', { 'expanded': areAddressesExpanded }]"
+            @click.stop="emit('toggle-addresses')"
+            title="Klick zum Adresse ein-/ausblenden"
+          >
+            📍 {{ hasAddress ? 1 : 0 }} <span class="toggle-icon">▼</span>
+          </span>
+
+          <!-- Communications Toggle Badge (immer sichtbar im View-Mode) -->
+          <span
+            v-if="mode === 'view'"
+            :class="['badge', 'bg-light', 'text-dark', 'communications-badge', { 'expanded': areCommunicationsExpanded }]"
+            @click.stop="emit('toggle-communications')"
+            title="Klick zum Kommunikationen ein-/ausblenden"
+          >
+            💬 {{ communicationsCount }} <span class="toggle-icon">▼</span>
           </span>
         </div>
       </div>
@@ -858,6 +897,43 @@ const getStatusClass = (status) => {
 .meta-part:last-child::after {
   content: '';
   margin-left: 0;
+}
+
+/**
+ * Job Badges Section
+ */
+.job-badges-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.address-badge,
+.communications-badge {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: background-color 0.2s, transform 0.2s;
+}
+
+.address-badge:hover,
+.communications-badge:hover {
+  background-color: #e9ecef !important;
+  transform: scale(1.05);
+}
+
+.address-badge .toggle-icon,
+.communications-badge .toggle-icon {
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.address-badge.expanded .toggle-icon,
+.communications-badge.expanded .toggle-icon {
+  transform: rotate(180deg);
 }
 
 /**

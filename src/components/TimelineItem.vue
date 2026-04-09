@@ -316,11 +316,14 @@ const saveChanges = async () => {
     const jobId = props.jobId;
     const communicationType = props.mode === 'create' ? props.communicationType : props.communication.type;
     
+    // Konvertiere Datumsformat: "2026-04-09 06:45" → "2026-04-09T06:45:00"
+    const formattedDate = formData.date ? formData.date.replace(' ', 'T') + ':00' : null;
+    
     // Baue Payload (gleich für edit und create)
     const payload = {
       jobId: jobId,
       type: communicationType,
-      date: formData.date,
+      date: formattedDate,
       person: formData.person || null,
       role: formData.role || null,
       content: formData.content || null,

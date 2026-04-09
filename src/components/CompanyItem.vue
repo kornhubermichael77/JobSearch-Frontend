@@ -30,9 +30,17 @@ const props = defineProps({
     type: Number,
     default: 0,  // Für View-Mode Badges: Anzahl der Jobs
   },
+  areAddressesExpanded: {
+    type: Boolean,
+    default: false,  // Für View-Mode: sind die Adressen gerade expanded?
+  },
+  areJobsExpanded: {
+    type: Boolean,
+    default: false,  // Für View-Mode: sind die Jobs gerade expanded?
+  },
 });
 
-const emit = defineEmits(['update', 'delete', 'cancel', 'toggle', 'edit-request']);
+const emit = defineEmits(['update', 'delete', 'cancel', 'toggle', 'edit-request', 'toggle-addresses', 'toggle-jobs']);
 
 /**
  * State Management
@@ -281,13 +289,26 @@ const cancelDelete = () => {
         </div>
       </div>
 
-      <!-- RIGHT: Badges (nur im collapsed-Zustand) -->
-      <div v-if="!isExpanded" class="company-badges">
-        <span class="badge bg-light text-dark">
-          {{ company.addresses?.length || 0 }} 📍
+      <!-- RIGHT: Badges + Toggles -->
+      <div class="company-badges-section">
+        <!-- Address Toggle Badge (immer sichtbar im View-Mode) -->
+        <span
+          v-if="mode === 'view'"
+          :class="['badge', 'bg-light', 'text-dark', 'address-badge', { 'expanded': areAddressesExpanded }]"
+          @click="emit('toggle-addresses')"
+          title="Klick zum Adressen ein-/ausblenden"
+        >
+          📍 {{ company.addresses?.length || 0 }} <span class="toggle-icon">▼</span>
         </span>
-        <span class="badge bg-light text-dark">
-          {{ jobCount }} 💼
+
+        <!-- Jobs Toggle Badge (immer sichtbar im View-Mode) -->
+        <span
+          v-if="mode === 'view'"
+          :class="['badge', 'bg-light', 'text-dark', 'job-badge', { 'expanded': areJobsExpanded }]"
+          @click="emit('toggle-jobs')"
+          title="Klick zum Jobs ein-/ausblenden"
+        >
+          💼 {{ jobCount }} <span class="toggle-icon">▼</span>
         </span>
       </div>
     </div>
@@ -625,6 +646,62 @@ const cancelDelete = () => {
 .company-person a:hover {
   background: rgba(255, 255, 255, 0.2);
   text-decoration: underline;
+}
+
+/**
+ * RIGHT: Badges Section (Adressen Toggle + Jobs Badge)
+ */
+.company-badges-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.address-badge {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: background-color 0.2s, transform 0.2s;
+}
+
+.address-badge:hover {
+  background-color: #e9ecef !important;
+  transform: scale(1.05);
+}
+
+.address-badge .toggle-icon {
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.address-badge.expanded .toggle-icon {
+  transform: rotate(180deg);
+}
+
+.job-badge {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: background-color 0.2s, transform 0.2s;
+}
+
+.job-badge:hover {
+  background-color: #e9ecef !important;
+  transform: scale(1.05);
+}
+
+.job-badge .toggle-icon {
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.job-badge.expanded .toggle-icon {
+  transform: rotate(180deg);
 }
 
 /**
